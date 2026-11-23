@@ -1,0 +1,20 @@
+# third-party tools (zmac, trs80gp) - download them from 48k.ca into tools\
+tools/
+
+# build output (zmac listings, cassette images, WAVs) and generated graphics
+zout/
+gfx.inc
+
+# test scratch files
+test/*.png
+test/*.keys
+test/*.cmd
+test/*.lev
+test/*.zlp
+test/dosdir/
+test/gentest.exe
+
+# editor and OS clutter
+*.bak
+Thumbs.db
+desktop.ini

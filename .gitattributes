@@ -1,0 +1,7 @@
+# TRS-80 programs and level files, and the editor, are binary
+*.cmd binary
+*.CMD binary
+*.lev binary
+*.LEV binary
+*.exe binary
+*.png binary

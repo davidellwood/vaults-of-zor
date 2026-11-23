@@ -1,0 +1,143 @@
+; Vaults of Zor level pack - edit with ZorEdit.exe or any text editor
+; map: # wall  . floor  D door  H ladder (start)  G guardian
+;      K key  S sword  P potion  $ gold  A amulet
+;      ? sign  ^ trap  @ teleporter  W fountain  = pressure plate  % secret wall  & character
+; obj=x,y,a,b,c,d,text  sets the parameters of the cell at x,y (see README)
+; obj2=x,y,text         a character's speech once its deed is done
+
+[pack]
+banner1=VAULTS
+banner2=OF ZOR
+subtitle=A MAZE ADVENTURE FOR THE TRS-80 MODEL I
+line1=RECOVER THE AMULETS OF ZOR AND CLIMB BACK OUT
+line2=ARROWS: UP=FORWARD  DOWN=BACK  LEFT/RIGHT=TURN
+line3=OR TYPE COMMANDS: TAKE, OPEN, ATTACK, LOOK, HELP
+victory=YOU CLIMB INTO THE SUNLIGHT WITH THE AMULETS OF ZOR!
+starthp=12
+maxhp=15
+heal=6
+hit=70
+guardhit=37
+goldmin=5
+goldmax=20
+key=A BRASS KEY
+key1=AN IRON KEY
+key2=A SILVER KEY
+key3=A GOLD KEY
+sword=A SHORT SWORD
+potion=A RED POTION
+gold=SOME GOLD
+amulet=THE AMULET OF ZOR
+hermit=AN OLD HERMIT
+merchant=A MERCHANT
+ghost=A GHOST
+
+[level]
+name=THE UPPER VAULTS
+guardhp=3
+facing=E
+intro=YOU CLIMB DOWN INTO THE DARK VAULTS OF ZOR. SOMEWHERE BELOW LIES THE AMULET. FIND IT AND RETURN HERE TO THE LADDER.|TYPE HELP FOR COMMANDS.
+map=
+################################
+#H..#D...A#.......#...#....$..##
+###.#.#####.#.#.#.#.#$#.#.#.####
+#S..#.#.....#.....#.#.....#...##
+#.#.#.#.#####.#.#.#.#.###.###.##
+#.#.#.#.........#.............##
+#.#.#.#.#.#.#$#.#.#.###.###.#.##
+#.....#..$#..........$..#.#$..##
+#.#.#.#.#####.#.#.#.#.#.#.#.#.##
+#...#...#.P.......#.#.#.......##
+#.#.#####.#.#.###.#.#.#.#.#.#.##
+#.....#.........#....$#...#.#.##
+#.#.#.#.###.###.#.#.###.#.###.##
+#.......#.......#.#.#.......#.##
+#.#######.#####.#.#.#####.#.#.##
+#.........G..K#...............##
+#.#.#.#.#######.#.#.#.#.#.#.#.##
+#.#...#.........#..$....#.P.#.##
+#.#########.###.#.#.###.#.#.#.##
+#.................#$..#...#...##
+#####.#.#.#####.#.#.###.###.#.##
+#&........#......$..........#.##
+################################
+################################
+obj=1,21,0,1,0,6,WELCOME, YOUNG ONE. THE GUARDIAN FEARS ONLY STEEL: FIND THE SWORD FIRST, THEN THE KEY. TAKE THIS POTION FOR THE ROAD.
+obj2=1,21,GO NOW. THE AMULET WAITS BEYOND THE LOCKED DOOR.
+
+[level]
+name=THE DEEP VAULTS
+guardhp=4
+facing=E
+intro=THE LADDER LEADS DEEPER STILL. THE AIR IS COLD AND A SECOND AMULET GLINTS SOMEWHERE IN THE DARK. A FIERCER GUARDIAN WAITS.
+map=
+################################
+#H........$...#.........$.....##
+###.#.#.#.#.#.#.###.#.#.#.#.#.##
+#S..#...#...#.....#....$..#...##
+#$#.#.###.#.#####.#.#.#.#.#.#.##
+#.#.................#...#.#...##
+#.#.###.#.#.#.#.#.#.#P#.#.#.#.##
+#.$.....#.#...#.......#.#.....##
+#.#.#.#.#.###.#.###.#.#.#.#.#.##
+#...#...#.#.....#A#.#...#.....##
+#.###.#.#.#.###.#.#.#.#.#.#.#.##
+#.......#.......#.#.........#$##
+#.#.#.#.#.#.###.#.#.#.#.#.#.#.##
+#.....#..........D#.....#...#.##
+#.#####.#.#$#.#####.###.#.#.#.##
+#.....................#.#..$..##
+###.#.###.#####.#.###.###.#.#.##
+#...#.............P...#...#...##
+#.#.###.###.#########.#.#####.##
+#..$....#...#...............#.##
+#####.#.#.###.#.#.#.#.###.#.#.##
+#K..G.....#&......$...........##
+################################
+################################
+obj=11,21,1,2,15,6,FINE POTIONS! A RED POTION FOR ONLY 15 GOLD PIECES.
+obj2=11,21,A PLEASURE DOING BUSINESS. MIND THAT GUARDIAN!
+
+[level]
+name=THE HALL OF TRIALS
+guardhp=5
+facing=E
+intro=THE LAST VAULT IS FULL OF TRICKS: SIGNS, TRAPS, A FOUNTAIN, A GLOWING CIRCLE AND WALLS THAT ARE NOT WHAT THEY SEEM. THE THIRD AMULET LIES BEHIND AN IRON DOOR.
+map=
+################################
+#H?........^............#.....##
+###$###.#.#.#.#.#.#.#.#.#.#.#.##
+#W&....$#..$.....$#S....#.....##
+#####.#.###.#.#.#.#.#.#.###.####
+#...=.#.....#.............#...##
+#.#####.#.###.#.###.#####.#.#.##
+#....$..............G..K#...#.##
+#.#.#.#.#.#.#.###.#.#####.#.#.##
+#.............%...........#.#P##
+#.#.#.#.#.#.#.#.#.###.#.#.#.#.##
+#..$............#...#...#.....##
+#.#######.#########.#.###.#.#.##
+#.....#A#.......#........$#...##
+#####.#.###.#.#.#.###.#.#.#$#.##
+#.....#..D..............#.....##
+#.#.#.#####.#.###.#.#.###.#.#.##
+#.......#..$#.....#.#.....#.#.##
+#.#####.#.###.#.#P#.###.###.#.##
+#.............#...#...........##
+#.###.#.###.#.#.#####.#.#####.##
+#...........#@#....^......$...##
+################################
+################################
+obj=2,1,0,0,0,0,BEWARE: NOT EVERY STONE IS SOLID, NOT EVERY FLOOR IS SAFE.
+obj=23,7,1,0,0,0,
+obj=9,15,1,0,0,0,
+obj=20,7,4,3,35,0,A HUGE GUARDIAN IN BLACK IRON ARMOUR BLOCKS THE PASSAGE.
+obj=11,1,2,0,0,0,A HIDDEN SPIKE STABS YOUR FOOT!
+obj=19,21,4,1,1,0,THE TRAP SNAPS SHUT, THEN CRUMBLES TO RUST.
+obj=1,3,0,2,0,0,COOL WATER RESTORES YOU.
+obj=13,21,29,21,0,0,
+obj=4,5,18,2,0,0,
+obj=14,9,0,0,0,0,YOU STEP THROUGH THE WALL - IT WAS ONLY AN ILLUSION!
+obj=3,2,50,0,0,0,
+obj=29,9,12,0,0,0,
+obj=2,3,2,4,0,0,THE WATERS BEHIND ME WERE MINE ONCE... BUT YOU MAY DRINK. PASS, LIVING ONE, AND BEWARE THE HIDDEN SPIKES.
