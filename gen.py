@@ -387,6 +387,14 @@ ITEMS.update({
 #oooooooo#
 ##########
 """,
+    "THING": """
+.########.
+#oooooooo#
+##########
+#oooo#ooo#
+#oooooooo#
+##########
+""",
 })
 
 GLINT = """
@@ -509,6 +517,7 @@ MW, MH = 32, 24          # storage size (power-of-two width)
 FLOOR, WALL, DOOR, LADDER, GUARD, KEY, SWORD, POTION, GOLD, AMULET = range(10)
 SIGN, TRAP, TELE, FOUNT, PLATE, SECRET = range(10, 16)   # spaces with game logic
 HERMIT, MERCHANT, GHOST = range(16, 19)                   # non-player characters
+THING = 19                # a scripted item lying on the floor (drawn, never stored in the map)
 SOLID = (WALL, DOOR)
 
 
@@ -751,6 +760,50 @@ def add_npcs(g, start, info, which):
     return lines
 
 
+def add_script(g, start, info):
+    """Level 1 side quest, Scott Adams style: light the lantern, search the dark
+    corner, move the loose stone. Returns the script lines."""
+    door, guard = info["door"], info["guard"]
+    free, _ = bfs(g, start, blocked={door, guard})
+    def quiet(c):
+        return all(g[c[1] + dy][c[0] + dx] in (FLOOR, WALL) for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)))
+    dead = sorted((c for c in free if g[c[1]][c[0]] == FLOOR and open_neighbours(g, *c) == 1 and quiet(c)),
+                  key=lambda c: free[c])
+    lamp, nook = dead[0], dead[-1]          # lantern near the start, the dark corner far away
+    L, N = f"{lamp[0]},{lamp[1]}", f"{nook[0]},{nook[1]}"
+    return ["script=",
+        "# A side quest in the style of the old two-word adventures.",
+        "# Light the lantern, find the dark corner, move the loose stone.",
+        f'item lamp "A DUSTY LANTERN" at {L} nouns LANTERN,LAMP desc "AN OLD BRASS LANTERN. IT IS NOT LIT, BUT THERE IS OIL IN IT."',
+        'item litlamp "A LIT LANTERN" nowhere nouns LANTERN,LAMP desc "THE LANTERN BURNS WITH A STEADY YELLOW FLAME."',
+        'item ruby "A GLITTERING RUBY" nowhere nouns RUBY,GEM desc "A RUBY AS BIG AS A PIGEON EGG."',
+        "synonym IGNITE = LIGHT",
+        "synonym PUSH = MOVE",
+        "synonym PULL = MOVE",
+        'on LIGHT LAMP if carried lamp and flag noil then say "THERE IS NO OIL LEFT."',
+        'on LIGHT LAMP if carried lamp then swap lamp litlamp; counter oil = 40;',
+        '  say "THE WICK CATCHES. THE LANTERN GLOWS."',
+        'on LIGHT LAMP if present litlamp then say "IT IS ALREADY LIT."',
+        'on LIGHT LAMP if here lamp then say "PICK IT UP FIRST."',
+        'on LIGHT any then say "YOU HAVE NOTHING TO LIGHT."',
+        'on EXTINGUISH LAMP if carried litlamp then swap litlamp lamp; say "YOU PUT THE LANTERN OUT."',
+        "synonym DOUSE = EXTINGUISH",
+        "every turn if carried litlamp then sub oil 1",
+        "every turn if carried litlamp and counter oil < 1 then swap litlamp lamp;",
+        '  say "THE LANTERN SPUTTERS AND GOES OUT. THE OIL IS GONE."; set noil',
+        f'on arrive if at {N} and not present litlamp then say "THIS CORNER IS PITCH BLACK. YOU FEEL A COLD DRAUGHT."',
+        f'on arrive if at {N} and present litlamp and not flag moved then',
+        '  say "BY LANTERN LIGHT YOU SEE A LOOSE STONE IN THE WALL."; set spotted',
+        f'on MOVE STONE if at {N} and flag spotted and not flag moved then put ruby at {N}; set moved;',
+        '  score 50; say "THE STONE SLIDES OUT. SOMETHING GLITTERS IN THE HOLE BEHIND IT!"',
+        f'on MOVE STONE if at {N} and not flag spotted then say "IT IS TOO DARK TO SEE ANY STONE."',
+        'on MOVE STONE then say "WHAT STONE?"',
+        'on EXAMINE STONE if flag spotted then say "IT IS LOOSE IN ITS SETTING."',
+        'on RUB LAMP if present lamp then say "NOTHING HAPPENS. THIS IS NOT THAT KIND OF LANTERN."',
+        'on RUB LAMP if present litlamp then say "OUCH! IT IS HOT."',
+        "endscript"]
+
+
 def write_default_pack():
     """Write levels/default.zlp, the editable level pack ZorEdit opens."""
     levels = [
@@ -789,7 +842,10 @@ def write_default_pack():
     for name, seed, ghp, intro in levels:
         g, start, sdir, info = build_maze(seed)
         objs = add_features(g, start, info, seed) if name == "THE HALL OF TRIALS" else []
-        objs += add_npcs(g, start, info, len([l for l in out if l == "[level]"]))
+        which = len([l for l in out if l == "[level]"])
+        objs += add_npcs(g, start, info, which)
+        if which == 0:
+            objs += add_script(g, start, info)
         out += ["[level]", f"name={name}", f"guardhp={ghp}", "facing=" + "NESW"[sdir],
                 f"intro={intro}", "map="]
         out += ["".join(MAPSYM[g[y][x]] for x in range(MW)) for y in range(MH)]
@@ -825,9 +881,9 @@ def emit_phase(L, p, segs, spr):
     names = {LADDER: "LADDER", GUARD: "GUARD", KEY: "KEY", SWORD: "SWORD",
              POTION: "POTION", GOLD: "GOLD", AMULET: "AMULET", SIGN: "SIGN",
              TRAP: "TRAP", TELE: "TELE", FOUNT: "FOUNT", PLATE: "PLATE",
-             HERMIT: "HERMIT", MERCHANT: "MERCHANT", GHOST: "GHOST"}
+             HERMIT: "HERMIT", MERCHANT: "MERCHANT", GHOST: "GHOST", THING: "THING"}
     L.append(f"SPRTAB_{p}:")
-    for code in range(19):
+    for code in range(20):
         ptrs = []
         for d in (1, 2, 3):
             n = f"{names[code]}{d}" if code in names else None

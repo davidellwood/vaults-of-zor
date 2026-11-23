@@ -38,6 +38,8 @@ namespace ZorEdit
         TextBox tPText, tPText2;
         Label lPText2;
         Button bTarget;
+        TextBox tScript;
+        Label lScriptResult;
 
         static readonly Cell[] Palette = { Cell.Wall, Cell.Floor, Cell.Door, Cell.Ladder, Cell.Guard,
                                            Cell.Key, Cell.Sword, Cell.Potion, Cell.Gold, Cell.Amulet,
@@ -94,6 +96,7 @@ namespace ZorEdit
             test.DropDownItems.Add(Item("Set &Emulator Path...", Keys.None, (s, e) => PickEmulator()));
             ToolStripMenuItem help = new ToolStripMenuItem("&Help");
             help.DropDownItems.Add(Item("&Quick Guide", Keys.F1, (s, e) => ShowHelp()));
+            help.DropDownItems.Add(Item("&Script Reference", Keys.Shift | Keys.F1, (s, e) => ShowScriptHelp()));
             menu.Items.AddRange(new ToolStripItem[] { file, lev, test, help });
 
             ToolStrip tools = new ToolStrip();
@@ -121,7 +124,7 @@ namespace ZorEdit
             tools.Items.Add(new ToolStripControlHost(toolLabel));
 
             StatusStrip status = new StatusStrip();
-            sCell = new ToolStripStatusLabel("") { Width = 160, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft };
+            sCell = new ToolStripStatusLabel("") { Width = 260, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft };
             sInfo = new ToolStripStatusLabel("") { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
             status.Items.Add(sCell);
             status.Items.Add(sInfo);
@@ -147,13 +150,15 @@ namespace ZorEdit
             tabs.TabPages.Add(LevelTab());
             tabs.TabPages.Add(GameTab());
             tabs.TabPages.Add(TitleTab());
+            tabs.TabPages.Add(ScriptTab());
             tabs.SelectedIndexChanged += (s, e) => RefreshTitle();
 
             // centre: map
             Panel mid = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = Color.FromArgb(24, 24, 28) };
             canvas = new MapCanvas { Location = new Point(10, 10) };
             canvas.Painted += (x, y, erase) => PaintCell(x, y, erase);
-            canvas.Hover += (x, y) => sCell.Text = x < 0 ? "" : "Cell " + x + "," + y + "  " + CellName(Cur.Map[y, x]);
+            canvas.Hover += (x, y) => sCell.Text = x < 0 ? "" : "Cell " + x + "," + y + "  " + CellName(Cur.Map[y, x]) +
+                string.Concat(canvas.ScriptItems.Where(it => it.Key.X == x && it.Key.Y == y).Select(it => "  + " + it.Value));
             mid.Controls.Add(canvas);
 
             Controls.Add(mid);
@@ -236,6 +241,86 @@ namespace ZorEdit
             tVictory.TextChanged += Changed;
             foreach (NumericUpDown n in new[] { nStartHp, nMaxHp, nHeal, nHit, nGuardHit, nGoldMin, nGoldMax }) n.ValueChanged += Changed;
             return p;
+        }
+
+        TabPage ScriptTab()
+        {
+            TabPage p = new TabPage("Script");
+            Label head = new Label
+            {
+                Dock = DockStyle.Top, Height = 34, Padding = new Padding(4),
+                Text = "Rules for this level, Scott Adams style: items, verbs, flags, counters. Help > Script Reference."
+            };
+            tScript = new TextBox
+            {
+                Dock = DockStyle.Fill, Multiline = true, ScrollBars = ScrollBars.Both, WordWrap = false,
+                AcceptsTab = true, Font = new Font("Consolas", 9f), CharacterCasing = CharacterCasing.Normal
+            };
+            tScript.TextChanged += (s, e) =>
+            {
+                if (loading) return;
+                Cur.Script = tScript.Text.Replace("\r\n", "\n");
+                canvas.ScriptItems = ScriptCompiler.ItemPositions(Cur.Script);
+                MarkDirty();
+            };
+            FlowLayoutPanel bottom = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 110, FlowDirection = FlowDirection.TopDown, WrapContents = false };
+            FlowLayoutPanel buttons = new FlowLayoutPanel { Height = 30, Width = 360 };
+            buttons.Controls.Add(Btn("Check script", 100, (s, e) => CheckScript()));
+            buttons.Controls.Add(Btn("Reference", 90, (s, e) => ShowScriptHelp()));
+            buttons.Controls.Add(Btn("Example", 80, (s, e) => InsertExample()));
+            lScriptResult = new Label { AutoSize = true, MaximumSize = new Size(360, 0), ForeColor = Color.DarkGreen };
+            bottom.Controls.Add(buttons);
+            bottom.Controls.Add(lScriptResult);
+            p.Controls.Add(tScript);
+            p.Controls.Add(bottom);
+            p.Controls.Add(head);
+            return p;
+        }
+
+        void CheckScript()
+        {
+            List<string> errs = Checker.CheckScripts(pack);
+            lScriptResult.ForeColor = errs.Count == 0 ? Color.DarkGreen : Color.DarkRed;
+            lScriptResult.Text = errs.Count == 0 ? "All scripts compile." : string.Join("\n", errs.Take(6).Select(e => e.Substring(6)));
+        }
+
+        void InsertExample()
+        {
+            if (tScript.Text.Trim().Length > 0 && MessageBox.Show(this, "Add the example to the end of this level's script?", "Script", MessageBoxButtons.OKCancel) != DialogResult.OK) return;
+            int lx, ly;
+            Cur.FindLadder(out lx, out ly);
+            string ex = "# Example: a lantern that can be lit, and a hidden reward\r\n" +
+                "item lamp \"A DUSTY LANTERN\" at " + lx + "," + ly + " nouns LANTERN,LAMP desc \"AN OLD LANTERN. IT IS NOT LIT.\"\r\n" +
+                "item litlamp \"A LIT LANTERN\" nowhere nouns LANTERN,LAMP desc \"IT BURNS BRIGHTLY.\"\r\n" +
+                "synonym IGNITE = LIGHT\r\n" +
+                "on LIGHT LAMP if carried lamp then swap lamp litlamp; say \"THE LANTERN GLOWS.\"; score 10\r\n" +
+                "on LIGHT LAMP if present litlamp then say \"IT IS ALREADY LIT.\"\r\n" +
+                "on LIGHT any then say \"YOU HAVE NOTHING TO LIGHT.\"\r\n";
+            tScript.AppendText((tScript.Text.Length > 0 && !tScript.Text.EndsWith("\n") ? "\r\n" : "") + ex);
+        }
+
+        void ShowScriptHelp()
+        {
+            Info("LEVEL SCRIPTS  (one statement per line; # comment; a line starting with a space continues the last)\n\n" +
+                 "item NAME \"TITLE\" at X,Y | carried | nowhere  [fixed]  [nouns WORD,WORD]  [desc \"TEXT\"]\n" +
+                 "synonym NEWWORD = WORD\n" +
+                 "on VERB [NOUN | any] [if CONDITION and ...] then ACTION; ACTION...\n" +
+                 "every turn [if ...] then ...        on arrive [if ...] then ...\n\n" +
+                 "The first 'on' rule whose conditions hold acts, and the command stops there (unless it says continue). " +
+                 "Rules may use built-in verbs (TAKE, OPEN, LOOK...) to change what they do. All 'every turn' and 'on arrive' rules that hold act.\n\n" +
+                 "CONDITIONS (put 'not' in front to reverse):\n" +
+                 "  carried ITEM   here ITEM   present ITEM   exists ITEM   at X,Y   ahead X,Y\n" +
+                 "  flag NAME   counter NAME >= N  (> < <=)   chance PERCENT   facing CELL\n" +
+                 "  has sword | amulet | key0-key3 | potion | gold N\n\n" +
+                 "ACTIONS:\n" +
+                 "  say \"TEXT\"   speak \"TEXT\" (words fly from the character in front)   die \"TEXT\"\n" +
+                 "  set FLAG   clear FLAG   counter NAME = N   add NAME N   sub NAME N\n" +
+                 "  get ITEM   drop ITEM   destroy ITEM   put ITEM at X,Y   swap ITEM ITEM\n" +
+                 "  cell X,Y CELL   goto X,Y   score N   hurt N   heal N (0 = fully)\n" +
+                 "  give WHAT [N]   take WHAT [N]   win   inventory   look   continue\n\n" +
+                 "CELL: floor wall door ladder guardian key sword potion gold amulet sign trap teleporter fountain plate secret hermit merchant ghost\n\n" +
+                 "Items can be picked up with TAKE/GET, put down with DROP and looked at with LOOK/EXAMINE. " +
+                 "Flags (32), counters (8) and words are shared by all levels of the pack.");
         }
 
         TabPage TitleTab()
@@ -343,8 +428,10 @@ namespace ZorEdit
             SetNum(nGuardHp, l.GuardHp);
             cFacing.SelectedIndex = l.Facing + 1;
             tIntro.Text = l.Intro.Replace("|", "|");
+            if (tScript != null) { tScript.Text = (l.Script ?? "").Replace("\n", "\r\n"); lScriptResult.Text = ""; }
             loading = false;
             canvas.Level = l;
+            canvas.ScriptItems = ScriptCompiler.ItemPositions(l.Script);
             Select(-1, -1);
             UpdatePreview();
             UpdateInfo();
@@ -636,6 +723,7 @@ namespace ZorEdit
         {
             List<string> all = new List<string>();
             for (int i = 0; i < pack.Levels.Count; i++) all.AddRange(Checker.Check(pack.Levels[i], i));
+            all.AddRange(Checker.CheckScripts(pack));
             bool errors = all.Any(s => s.StartsWith("ERROR"));
             if (all.Count == 0) { if (showOk) MessageBox.Show(this, "All " + pack.Levels.Count + " level(s) look playable.", "Check pack", MessageBoxButtons.OK, MessageBoxIcon.Information); return true; }
             if (showOk || errors)
@@ -791,6 +879,8 @@ namespace ZorEdit
         Point selected = new Point(-1, -1);
         public Point Selected { get { return selected; } set { selected = value; Invalidate(); } }
         public bool Hold;                   // ignore the rest of this mouse drag
+        List<KeyValuePair<Point2, string>> scriptItems = new List<KeyValuePair<Point2, string>>();
+        public List<KeyValuePair<Point2, string>> ScriptItems { get { return scriptItems; } set { scriptItems = value; Invalidate(); } }
 
         /// Colours used for keys and doors of colour 0-3 (brass, iron, silver, gold).
         /// Colours for the three character looks (hermit, merchant, ghost).
@@ -827,6 +917,14 @@ namespace ZorEdit
                 using (Pen p = new Pen(Color.FromArgb(sel ? 255 : 110, col), 1.5f))
                     g.DrawRectangle(p, kv.Value.A * CS + 2, kv.Value.B * CS + 2, CS - 4, CS - 4);
             }
+            // script items placed with "at x,y": a small magenta + in the corner of the cell
+            using (Pen p = new Pen(Color.Magenta, 2))
+                foreach (KeyValuePair<Point2, string> it in scriptItems)
+                {
+                    int cx = it.Key.X * CS + CS - 6, cy = it.Key.Y * CS + 6;
+                    g.DrawLine(p, cx - 4, cy, cx + 4, cy);
+                    g.DrawLine(p, cx, cy - 4, cx, cy + 4);
+                }
             if (selected.X >= 0)
                 using (Pen p = new Pen(Color.Cyan, 2)) g.DrawRectangle(p, selected.X * CS, selected.Y * CS, CS, CS);
             if (hx >= 0)

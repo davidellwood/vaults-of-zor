@@ -140,6 +140,75 @@ In the default pack, a hermit in level 1 gives you a potion and a hint, a mercha
 sells potions for 15 gold, and a ghost in the Hall of Trials guards the fountain until you speak
 to it.
 
+### Adventure scripting: open-ended puzzles
+
+On top of the fixed rules, every level can carry a **script** in the style of the classic
+two-word adventures:
+- **Items:** a level's own objects (a lantern, a rope, an idol…) lie in the maze. You can `GET`,
+  `DROP` and `EXAMINE` them; they appear as a small chest in the 3D view and as `+` on the map.
+- **Words:** the designer can invent new verbs and nouns (`LIGHT LAMP`, `MOVE STONE`, `READ SCROLL`,
+  `PRAY`…), with synonyms.
+- **Game state:** 32 **flags** and 8 **counters** remember what has happened, across all levels of a pack.
+- **Rules:** each rule says "when the player types this (or every turn, or on arriving in a cell),
+  if these conditions hold, do these things". Rules can also change what the built-in commands
+  do, for example a special response to `OPEN DOOR` in one place.
+
+The command parser tries the level's rules first, then the built-in command. A verb the script
+knows but whose rules don't apply right now gets "YOU CAN'T DO THAT... YET.", and points from
+`score` actions add to your score.
+
+The default pack's first level has a small side quest showing it off:
+1. Find a dusty lantern and `LIGHT` it (or `IGNITE` it). It burns for 40 turns, then runs out of oil.
+2. Carry it into a pitch-black corner, where it reveals a loose stone.
+3. `MOVE STONE` (or `PUSH`/`PULL`) to find a ruby worth 50 points.
+
+![side quest](screenshots/side-quest.png)
+
+*After `MOVE STONE`: `LOOK` shows the ruby, `GET RUBY` takes it, and the score includes the
+script's 50 points.*
+
+Here is part of that script, as you would write it on ZorEdit's Script tab:
+
+```
+item lamp "A DUSTY LANTERN" at 11,21 nouns LANTERN,LAMP desc "AN OLD BRASS LANTERN."
+item litlamp "A LIT LANTERN" nowhere nouns LANTERN,LAMP desc "IT BURNS WITH A STEADY FLAME."
+item ruby "A GLITTERING RUBY" nowhere nouns RUBY,GEM
+synonym IGNITE = LIGHT
+on LIGHT LAMP if carried lamp and flag noil then say "THERE IS NO OIL LEFT."
+on LIGHT LAMP if carried lamp then swap lamp litlamp; counter oil = 40;
+  say "THE WICK CATCHES. THE LANTERN GLOWS."
+every turn if carried litlamp then sub oil 1
+every turn if carried litlamp and counter oil < 1 then swap litlamp lamp;
+  say "THE LANTERN SPUTTERS AND GOES OUT."; set noil
+on arrive if at 29,21 and present litlamp and not flag moved then
+  say "BY LANTERN LIGHT YOU SEE A LOOSE STONE IN THE WALL."; set spotted
+on MOVE STONE if at 29,21 and flag spotted and not flag moved then put ruby at 29,21;
+  set moved; score 50; say "THE STONE SLIDES OUT. SOMETHING GLITTERS BEHIND IT!"
+```
+
+**The language**, one statement per line (`#` starts a comment; a line beginning with a space
+continues the one before):
+
+| Statement | Meaning |
+|---|---|
+| `item NAME "TITLE" at X,Y` \| `carried` \| `nowhere` `[fixed] [nouns W,W] [desc "TEXT"]` | an item; `fixed` ones can't be picked up |
+| `synonym NEW = WORD` | another word for a verb or noun |
+| `on VERB [NOUN \| any] [if COND and …] then ACTION; ACTION…` | when the player types it, the first rule whose conditions hold acts (add `continue` to let the built-in command run too) |
+| `every turn [if …] then …` | after every turn, all that hold act |
+| `on arrive [if …] then …` | on entering a cell, all that hold act |
+
+| Conditions (put `not` in front to reverse) | Actions |
+|---|---|
+| `carried ITEM`, `here ITEM`, `present ITEM`, `exists ITEM` | `say "TEXT"`, `speak "TEXT"` (words fly from the character in front), `die "TEXT"` |
+| `at X,Y`, `ahead X,Y`, `facing CELL` | `get`, `drop`, `destroy ITEM`, `put ITEM at X,Y`, `swap ITEM ITEM` |
+| `flag NAME` | `set FLAG`, `clear FLAG` |
+| `counter NAME >= N` (or `>`, `<`, `<=`) | `counter NAME = N`, `add NAME N`, `sub NAME N` |
+| `chance PERCENT` | `cell X,Y CELL` (change the map), `goto X,Y` |
+| `has sword` \| `amulet` \| `key0`-`key3` \| `potion` \| `gold N` | `give`/`take` (the same things), `score N`, `hurt N`, `heal N`, `win`, `inventory`, `look`, `continue` |
+
+CELL is one of: floor wall door ladder guardian key sword potion gold amulet sign trap teleporter
+fountain plate secret hermit merchant ghost.
+
 ## Making levels with ZorEdit
 
 ![editor](screenshots/editor.png)
@@ -165,6 +234,9 @@ to it.
 * **Game tab:** victory text, starting and maximum HP, potion strength, sword and guardian hit
   chances, gold per pile, and the names of the items (four key colours, sword, potion, gold, amulet).
 * **Title Screen tab:** two lines of big banner text, a subtitle and three text lines, with a live preview.
+* **Script tab:** the level's adventure script (see *Adventure scripting* above), with **Check
+  script**, a **Reference** card (also Help > Script Reference, Shift+F1) and an **Example** to
+  start from. Items placed with `at X,Y` show as a magenta `+` on the map; hover to see their names.
 * **Test > Check Pack (F7)** plays through every level to make sure each amulet can be reached. It
   uses keys on doors of their colour, steps on plates, takes teleporters, walks through secret
   walls, and counts guardians as passable once a sword has been collected. It also reports
@@ -256,7 +328,7 @@ The ready-built `ZOR.CMD`, `ZOR.LEV` and `ZorEdit.exe` in the repository root ar
 |---|---|
 | `zor.asm` | The game engine (Z80): pack loader, renderer, map, text window, parser, game logic |
 | `gen.py` | Pre-renders the wall segments and sprites into `gfx.inc`, and writes `levels/default.zlp` (`--levels` to regenerate it) |
-| `editor/*.cs` | ZorEdit: `Pack.cs` (file formats, pack compiler, checker, maze generator), `MainForm.cs` (UI), `Program.cs` (command line) |
+| `editor/*.cs` | ZorEdit: `Pack.cs` (file formats, pack compiler, checker, maze generator), `Script.cs` (script language compiler), `MainForm.cs` (UI), `Program.cs` (command line) |
 | `test/` | Test harness: `plan.py` works out winning key sequences from a `.ZLP`, `route.py` builds a key sequence for a chosen route, `play.ps1` / `shot.ps1` drive trs80gp through the keyboard matrix and capture the screen, `burst.ps1` captures a series of animation frames, `gentest.cs` checks the maze generator and the save/load round trip |
 | `tools/` | zmac and trs80gp from 48k.ca (not in the repository; see above) |
 
@@ -266,22 +338,35 @@ The ready-built `ZOR.CMD`, `ZOR.LEV` and `ZorEdit.exe` in the repository root ar
 from HL, loads files with the TRSDOS SVCs (`@FSPEC 441CH`, `@OPEN 4424H`, `@READ 4436H`,
 `@CLOSE 4428H`) and leaves through `@EXIT 402DH`. It reads keys with the ROM keyboard routine and
 writes straight to video RAM at `3C00H`. The engine, including four sets of pre-rendered wall and
-sprite graphics, ends at about `C760H`. A level file is loaded into the free memory after it, up
-to HIGH$, which leaves about 14K for levels in 48K (the 3-level default pack is under 5K; each
-level takes about 1.1K plus its texts).
+sprite graphics and the script interpreter, ends at about `D150H`. A level file is loaded into
+the free memory after it, up to HIGH$, which leaves about 11.5K for levels in 48K. The 3-level
+default pack is about 6K; each level takes about 1.1K plus its texts and script.
 
-**Level file format, version 3** (`.LEV` = the pack ZorEdit compiles). All pointers are offsets
+**Level file format, version 4** (`.LEV` = the pack ZorEdit compiles). All pointers are offsets
 from the start. Older files are not accepted: open the `.ZLP` in ZorEdit and export again.
 
 | Offset | Contents |
 |---|---|
-| 0 | `"ZORPACK"`, version 3 |
+| 0 | `"ZORPACK"`, version 4 |
 | 8 | total length (word), number of levels (byte) |
 | 11 | start HP, max HP, potion heal, sword hit chance and guardian hit chance (0-255), gold min, gold range |
 | 18 | → 1024-byte title screen (pre-rendered by ZorEdit) |
 | 20 | → victory text (text is upper case, 13 = new line, 0 = end, wrapped to 30 columns) |
 | 22 | → eleven names: key colours 0-3, sword, potion, gold, amulet, hermit, merchant, ghost |
-| 44 | → one record per level: start x, y, facing, guardian HP, → name, → intro, → objects, then the 32×24 map, one byte per cell (cell codes 0-18; 16-18 are the three characters) |
+| 44 | → the script vocabulary: entries of type (1 verb, 2 noun), id, word, 0; ends with type 0 |
+| 46 | → one record per level: start x, y, facing, guardian HP, → name, → intro, → objects, → script items, → rules, → texts, then the 32×24 map, one byte per cell (cell codes 0-18; 16-18 are the three characters) |
+
+A level's script, compiled by ZorEdit:
+- **Items:** a count, then 6 bytes each: x, y (x = 0 means nowhere if y = 0, carried if y = 1),
+  noun id, flags (bit 0 = can be carried), name text, description text.
+- **Rules:** a count, then for each: verb id (0 = every turn, 255 = on arrival), noun id (0 =
+  any), number of conditions, number of actions, then 4 bytes (op, a, b, c) per condition and per
+  action. A condition op with bit 7 set is negated.
+- **Texts:** a count and their offsets.
+
+Built-in verbs have ids 1-31, and script verbs 32 and up. Bit 6 of a maze cell is set while a
+script item lies there, so the 3D view and map can show it without searching the item list. The
+interpreter is the "Adventure scripting" section of `zor.asm`; the compiler is `editor/Script.cs`.
 
 A character's text is two speeches, each ending in 0. Each speech is short sentences separated
 by byte 01, and each sentence is wrapped into lines of up to 28 characters separated by 13, at
@@ -371,11 +456,23 @@ emulated keyboard matrix:
   as an emulator command-line argument (about 2,900 of them), so it is not counted as a game
   failure.
 
+* Adventure scripting, the level 1 side quest:
+  * `TAKE` the lantern
+  * `LIGHT LAMP`: the rule swaps it for the lit lantern, shown in `INV`
+  * `IGNITE` (a synonym of LIGHT) on a dropped lantern gets "PICK IT UP FIRST."
+  * `EXAMINE`, `DROP` and `GET` work on script items
+  * at the dark corner, the arrival rule spots the stone; `MOVE STONE` puts the ruby there, and `LOOK` shows it
+  * `GET RUBY` takes it, and `SCORE` includes the script's 50 points
+  * levels 1 and 2 still play through with the new parser
+
 Not yet checked: clicking through ZorEdit's Select tool, cell settings panel (including the
-character fields and second speech) and target picking by hand (the same model, file and compiler
-code ran through the command line and the emulator); a character giving keys, the sword, gold or
-the amulet, or healing (only potion-giving, selling and stepping aside were played); the pressure
-plate's opened wall seen in the 3D view; and the game on real hardware.
+character fields and second speech), target picking and the Script tab by hand (the same model,
+file and compiler code ran through the command line and the emulator); a character giving keys,
+the sword, gold or the amulet, or healing (only potion-giving, selling and stepping aside were
+played); the lantern burning out, the dark-corner message without the lantern, and most script
+conditions and actions beyond those in the side quest (`chance`, `facing`, `ahead`, `has`, `cell`,
+`goto`, `give`, `take`, `hurt`, `heal`, `win`, `die`, `speak`); the pressure plate's opened wall
+seen in the 3D view; and the game on real hardware.
 
 Test-harness quirk: a few runs received key presses that were never sent, probably host keystrokes
 reaching the emulator window while it had focus. The same runs were correct when repeated.

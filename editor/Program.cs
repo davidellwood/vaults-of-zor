@@ -48,6 +48,7 @@ namespace ZorEdit
             Pack p = Zlp.Load(a[1]);
             List<string> problems = new List<string>();
             for (int i = 0; i < p.Levels.Count; i++) problems.AddRange(Checker.Check(p.Levels[i], i));
+            problems.AddRange(Checker.CheckScripts(p));
             foreach (string s in problems) Console.WriteLine(s);
             if (problems.Any(s => s.StartsWith("ERROR"))) return 2;
             switch (cmd)

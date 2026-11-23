@@ -17,7 +17,7 @@ if ($LASTEXITCODE -ne 0) { throw "zmac failed" }
 $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 if (-not (Test-Path $csc)) { $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe' }
 & $csc /nologo /target:winexe /out:ZorEdit.exe /optimize+ /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Core.dll `
-    "/resource:zout\zor.cmd,engine.cmd" editor\Program.cs editor\Pack.cs editor\MainForm.cs
+    "/resource:zout\zor.cmd,engine.cmd" editor\Program.cs editor\Pack.cs editor\MainForm.cs editor\Script.cs
 if ($LASTEXITCODE -ne 0) { throw "csc failed" }
 
 # Default game files from the default level pack

@@ -82,6 +82,7 @@ namespace ZorEdit
         public string Intro = "";
         public Cell[,] Map = new Cell[H, W];
         public Dictionary<int, ObjParams> Objs = new Dictionary<int, ObjParams>();   // key y*W+x
+        public string Script = "";          // Scott Adams style rules (see Script.cs)
 
         /// Parameters of a cell (null if it has none set). create = make default ones.
         public ObjParams Params(int x, int y, bool create)
@@ -285,6 +286,14 @@ namespace ZorEdit
                                     };
                             }
                             break;
+                        case "script":      // script= ... endscript
+                            {
+                                List<string> sl = new List<string>();
+                                while (i + 1 < lines.Length && lines[i + 1].Trim().ToLowerInvariant() != "endscript") sl.Add(lines[++i]);
+                                i++;
+                                cur.Script = string.Join("\n", sl);
+                                break;
+                            }
                         case "obj2":        // obj2=x,y,text  (second text, e.g. a character's later speech)
                             string[] f2 = v.Split(new[] { ',' }, 3);
                             if (f2.Length == 3)
@@ -380,6 +389,12 @@ namespace ZorEdit
                     if (!string.IsNullOrEmpty(q.Text2))
                         o.Add("obj2=" + (kv.Key % Level.W) + "," + (kv.Key / Level.W) + "," + q.Text2.Replace("\r", "").Replace("\n", "|"));
                 }
+                if (!string.IsNullOrWhiteSpace(l.Script))
+                {
+                    o.Add("script=");
+                    o.AddRange(l.Script.Replace("\r", "").TrimEnd('\n').Split('\n'));
+                    o.Add("endscript");
+                }
                 o.Add("");
             }
             File.WriteAllLines(path, o.ToArray());
@@ -396,7 +411,7 @@ namespace ZorEdit
     public static class Compiler
     {
         public const int TitleSize = 1024;
-        public const byte Version = 3;      // level file format (3 = byte-per-cell maps, characters, 11 names)
+        public const byte Version = 4;      // level file format (4 = level scripts and vocabulary)
 
         /// Builds the binary level pack read by ZOR/CMD (see zor.asm for the layout).
         public static byte[] Build(Pack p)
@@ -421,7 +436,11 @@ namespace ZorEdit
             int offTitle = b.Count; b.Add(0); b.Add(0);
             int offVict = b.Count; b.Add(0); b.Add(0);
             int offNames = b.Count; for (int i = 0; i < 22; i++) b.Add(0);
+            int offVocab = b.Count; b.Add(0); b.Add(0);
             int offLevs = b.Count; for (int i = 0; i < n * 2; i++) b.Add(0);
+            ScriptCompiler sc = new ScriptCompiler();
+            List<LevelScript> scripts = p.Levels.Select((lv, k) => sc.CompileLevel(lv.Script, k)).ToList();
+            if (sc.Errors.Count > 0) throw new Exception(string.Join("\n", sc.Errors.Take(8)));
 
             Patch(b, offTitle, b.Count);
             b.AddRange(RenderTitle(p));
@@ -444,6 +463,9 @@ namespace ZorEdit
                 int offName = b.Count; b.Add(0); b.Add(0);
                 int offIntro = b.Count; b.Add(0); b.Add(0);
                 int offObjs = b.Count; b.Add(0); b.Add(0);
+                int offItems = b.Count; b.Add(0); b.Add(0);
+                int offRules = b.Count; b.Add(0); b.Add(0);
+                int offTexts = b.Count; b.Add(0); b.Add(0);
                 for (int y = 0; y < Level.H; y++)          // the map, one byte per cell
                     for (int x = 0; x < Level.W; x++)
                     {
@@ -497,7 +519,26 @@ namespace ZorEdit
                     Patch(b, textAt[k], b.Count);
                     AddText(b, Util.Wrap(q.Text, 30));
                 }
+
+                // the level's script: items, rules and texts (see zor.asm "Adventure scripting")
+                LevelScript ls = scripts[li];
+                if (!ls.Empty)
+                {
+                    Patch(b, offItems, b.Count);
+                    b.Add((byte)ls.Items.Count);
+                    foreach (byte[] it in ls.Items) b.AddRange(it);
+                    Patch(b, offRules, b.Count);
+                    b.Add((byte)ls.Rules.Count);
+                    foreach (byte[] r in ls.Rules) b.AddRange(r);
+                    Patch(b, offTexts, b.Count);
+                    b.Add((byte)ls.Texts.Count);
+                    int tab = b.Count;
+                    for (int t = 0; t < ls.Texts.Count; t++) { b.Add(0); b.Add(0); }
+                    for (int t = 0; t < ls.Texts.Count; t++) { Patch(b, tab + t * 2, b.Count); b.AddRange(ls.Texts[t]); }
+                }
             }
+            Patch(b, offVocab, b.Count);
+            b.AddRange(sc.VocabTable());
             Patch(b, 8, b.Count);
             return b.ToArray();
         }
@@ -517,7 +558,7 @@ namespace ZorEdit
 
         /// A character's speech: short sentences separated by 01, each wrapped into
         /// lines of up to 28 characters separated by 13, at most 4 lines per piece.
-        static void AddSpeech(List<byte> b, string text)
+        public static void AddSpeech(List<byte> b, string text)
         {
             List<List<string>> pieces = new List<List<string>>();
             foreach (string sentence in Sentences(text))
@@ -721,6 +762,14 @@ namespace ZorEdit
     public static class Checker
     {
         /// Returns a list of problems; lines starting with "ERROR" stop export.
+        /// Compile every level's script (they share words, flags and counters).
+        public static List<string> CheckScripts(Pack p)
+        {
+            ScriptCompiler sc = new ScriptCompiler();
+            for (int i = 0; i < p.Levels.Count; i++) sc.CompileLevel(p.Levels[i].Script, i);
+            return sc.Errors.Select(e => "ERROR " + e).ToList();
+        }
+
         public static List<string> Check(Level l, int index)
         {
             List<string> r = new List<string>();

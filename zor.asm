@@ -46,6 +46,8 @@ C_FOUNT	equ	13
 C_PLATE	equ	14
 C_SECRET equ	15		; looks like wall, walk straight through
 C_NPC	equ	16		; 16-18: characters (hermit, merchant, ghost)
+C_THING	equ	19		; drawn for a script item (never stored in the map)
+MAXITEMS equ	32		; script items per level
 MAXOBJ	equ	64		; parameter records per level
 
 FRAMEDLY equ	60		; animation pause: 16 keyboard polls x this loop (~17 ms)
@@ -66,8 +68,10 @@ PK_STATS equ	11		; db starthp,maxhp,heal,hit,ghit,goldmin,goldrange
 PK_TITLE equ	18		; dw -> 1024-byte title screen
 PK_VICT	equ	20		; dw -> victory text
 PK_NAMES equ	22		; dw x 11 -> names: keys 0-3, sword, potion, gold, amulet, 3 characters
-PK_LEVS	equ	44		; dw x n -> level records
+PK_VOCAB equ	44		; dw -> the script vocabulary
+PK_LEVS	equ	46		; dw x n -> level records
 ; level record: db x,y,dir,guardhp ; dw name ; dw intro ; dw objects ;
+;               dw items ; dw rules ; dw texts (0 = none) ;
 ;               768 bytes maze (one byte per cell)
 ; objects: db count, then count x 8-byte records (see objat)
 
@@ -116,6 +120,26 @@ newgame:
 	ld	hl,0
 	ld	(gold),hl
 	ld	(moves),hl
+	ld	(points),hl	; script state: flags, counters and points
+	ld	(FLAGS),hl
+	ld	(FLAGS+2),hl
+	ld	(COUNTERS),hl
+	ld	(COUNTERS+2),hl
+	ld	(COUNTERS+4),hl
+	ld	(COUNTERS+6),hl
+	ld	hl,(packp)	; the script vocabulary, if any
+	ld	de,PK_VOCAB
+	add	hl,de
+	ld	e,(hl)
+	inc	hl
+	ld	d,(hl)
+	ld	a,d
+	or	e
+	jr	z,ng_v
+	ld	hl,(packp)
+	add	hl,de
+	ex	de,hl
+ng_v:	ld	(vocabp),de
 	call	loadlevel
 
 mainlp:	ld	a,(keepview)	; a speech bubble stays up until the next action
@@ -398,9 +422,42 @@ ll_o1:	ld	(nobj),a
 	ld	de,OBJS
 	ldir
 ll_o2:	pop	hl
+	call	ll_ptr		; the level's script: items, rules, texts
+	ld	(litems),de
+	call	ll_ptr
+	ld	(lrules),de
+	call	ll_ptr
+	ld	(ltexts),de
 	ld	de,MAZE		; the map, one byte per cell
 	ld	bc,32*24
 	ldir
+	xor	a		; where the script items start
+	ld	(nitems),a
+	ld	hl,(litems)
+	ld	a,h
+	or	l
+	jr	z,ll_i9
+	ld	a,(hl)
+	cp	MAXITEMS+1
+	jr	c,ll_i1
+	ld	a,MAXITEMS
+ll_i1:	ld	(nitems),a
+	or	a
+	jr	z,ll_i9
+	ld	b,a
+	inc	hl
+	ld	de,ILOCS
+ll_i2:	ld	a,(hl)
+	ld	(de),a
+	inc	hl
+	inc	de
+	ld	a,(hl)
+	ld	(de),a
+	inc	de
+	ld	a,5
+	call	addhla
+	djnz	ll_i2
+ll_i9:	call	itembits
 	xor	a
 	ld	(KEYS),a
 	ld	(KEYS+1),a
@@ -431,6 +488,21 @@ ll_o2:	pop	hl
 	ld	hl,(lvintro)
 	call	packoff
 	jp	msg
+
+ll_ptr:				; DE = pack address of the word at HL (0 stays 0); HL += 2
+	ld	e,(hl)
+	inc	hl
+	ld	d,(hl)
+	inc	hl
+	ld	a,d
+	or	e
+	ret	z
+	push	hl
+	ld	hl,(packp)
+	add	hl,de
+	ex	de,hl
+	pop	hl
+	ret
 
 packoff:			; HL = pack start + HL
 	ld	de,(packp)
@@ -635,7 +707,7 @@ herecode:			; A = code of player's cell, HL = its address
 	ld	d,a
 	call	caddr
 	ld	a,(hl)
-	and	7Fh
+	and	3Fh
 	ret
 
 getvec:				; A = direction -> B = dx, C = dy
@@ -680,7 +752,7 @@ cellv:				; A = view index -> A = code (wall if outside), HL = addr
 	ld	a,C_WALL
 	ret	z
 	ld	a,(hl)
-	and	7Fh
+	and	3Fh
 	ret
 
 markv:				; mark view cell A as seen
@@ -878,7 +950,11 @@ rr_s1:	ld	a,(front)
 	call	cellv
 	or	a
 	jr	nz,rr_s2
-	inc	b
+	bit	6,(hl)		; a script item lying here?
+	jr	z,rr_s1n
+	ld	a,C_THING
+	jr	rr_s3
+rr_s1n:	inc	b
 	jr	rr_s1
 rr_s2:	cp	C_LADDER
 	jr	c,rr_copy
@@ -1216,7 +1292,14 @@ dm_n:	ld	a,(mx)
 	ld	a,(hl)
 	bit	7,a
 	jr	z,dm_blank
-	and	7Fh
+	and	3Fh
+	jr	nz,dm_x		; bare floor with a script item: +
+	bit	6,(hl)
+	ld	a,0
+	jr	z,dm_x
+	ld	a,C_THING
+	jr	dm_t
+dm_x:
 	cp	C_TRAP		; hidden traps stay hidden on the map too
 	jr	nz,dm_t
 	push	bc
@@ -1461,7 +1544,10 @@ ex_2:	ld	(hl),0
 	inc	hl
 	call	skipsp
 ex_3:	ld	(nounp),hl
-	ld	de,VOCAB
+	ld	c,2		; the noun, if the script knows it
+	call	findword
+	ld	(nounid),a
+	ld	de,VOCAB	; the verb: built-in first
 ex_4:	ld	a,(de)
 	or	a
 	jr	z,ex_unk
@@ -1481,16 +1567,57 @@ ex_6:	ld	a,(de)		; skip rest of this entry
 	inc	de
 	inc	de
 	inc	de
+	inc	de
 	jr	ex_4
 ex_hit:	inc	de
 	ld	a,(de)		; turn flag
 	ld	(tflag),a
+	inc	de
+	ld	a,(de)		; verb id
+	ld	(verbid),a
 	inc	de
 	ld	a,(de)
 	ld	l,a
 	inc	de
 	ld	a,(de)
 	ld	h,a
+	ld	(vhandler),hl
+	jr	ex_rules
+ex_unk:	ld	hl,(wordp)	; then the script's own verbs
+	ld	c,1
+	call	findword
+	or	a
+	jr	z,ex_bad
+	ld	(verbid),a
+	cp	32
+	jr	nc,ex_cust
+	call	bverb		; a script synonym of a built-in verb
+	jr	ex_rules
+ex_cust:
+	ld	a,1
+	ld	(tflag),a
+	ld	hl,0
+	ld	(vhandler),hl
+ex_rules:
+	call	runverb		; the level's rules get the first say
+	cp	2
+	jp	z,gturn
+	cp	3
+	jr	z,ex_do
+	ld	hl,(vhandler)
+	ld	a,h
+	or	l
+	jr	nz,ex_do
+	ld	a,(rres)	; a script verb that did nothing
+	or	a
+	ld	hl,M_UNK
+	jp	z,msg
+	ld	hl,M_CANT
+	jp	msg
+ex_do:	ld	hl,(vhandler)
+	ld	a,h
+	or	l
+	jp	z,gturn
 	ld	de,ex_ret
 	push	de
 	jp	(hl)
@@ -1498,7 +1625,7 @@ ex_ret:	ld	a,(tflag)
 	or	a
 	ret	z
 	jp	gturn
-ex_unk:	ld	hl,M_UNK
+ex_bad:	ld	hl,M_UNK
 	jp	msg
 
 ; ===========================================================================
@@ -1552,7 +1679,7 @@ domove:	ld	a,(px)
 	or	l
 	jr	z,mv_wall
 	ld	a,(hl)
-	and	7Fh
+	and	3Fh
 	cp	C_WALL
 	jr	z,mv_wall
 	cp	C_DOOR
@@ -1711,7 +1838,7 @@ hb_2:	ld	(hp),a
 	ret
 
 ; ---- arriving on a cell -------------------------------------------------------
-arrive:	xor	a
+arrive0:	xor	a
 	ld	(teleflag),a
 arrive2:
 	call	herecode
@@ -1751,7 +1878,7 @@ ar_space:
 	jp	z,ar_plate
 				; secret wall: it was never there
 	call	herecode
-	ld	(hl),80h
+	call	floorcell
 	ld	de,M_SECRET
 	jr	ar_say
 ar_sign:
@@ -1775,7 +1902,7 @@ ar_trap:
 	or	a
 	jr	z,at_t1
 	call	herecode	; one-shot: the trap is spent
-	ld	(hl),80h
+	call	floorcell
 at_t1:	ld	de,M_TRAP
 	call	ar_say
 	ld	a,(ix+2)
@@ -1796,7 +1923,7 @@ ar_tele:
 	or	l
 	ret	z
 	ld	a,(hl)
-	and	7Fh
+	and	3Fh
 	cp	C_WALL
 	ret	z
 	cp	C_DOOR
@@ -1838,7 +1965,7 @@ ar_fount:
 	ld	(ix+3),a
 	ret	nz
 	call	herecode
-	ld	(hl),80h
+	call	floorcell
 	ld	hl,M_DRY
 	jp	msg
 ar_plate:
@@ -1856,7 +1983,7 @@ ar_plate:
 	or	l
 	ret	z
 	ld	a,(hl)		; the target becomes open floor
-	and	80h
+	and	0C0h
 	ld	(hl),a
 	ld	de,M_PLATE
 	jp	ar_say
@@ -1874,6 +2001,16 @@ in_2:	add	a,a
 	jp	packw
 
 act_take:
+	ld	a,(nounid)	; TAKE <script noun>
+	or	a
+	jr	z,tk_plain
+	ld	c,2
+	call	finditem
+	cp	0FFh
+	jp	nz,take_item
+	ld	hl,M_NOSEE
+	jp	msg
+tk_plain:
 	call	herecode
 	cp	C_KEY
 	jp	c,tk_none
@@ -1883,7 +2020,7 @@ act_take:
 	push	hl
 	call	getobj
 	pop	hl
-	ld	(hl),80h	; cell becomes (seen) floor
+	call	floorcell	; cell becomes (seen) floor
 	pop	af
 	cp	C_GOLD
 	jr	z,tk_gold
@@ -1951,6 +2088,9 @@ tg_2:	ld	e,a
 	ld	hl,M_GOLD2
 	jp	msgc
 tk_none:
+	call	firsthere	; nothing built in: a script item?
+	cp	0FFh
+	jp	nz,take_item
 	ld	hl,M_NOTAKE
 	jp	msg
 
@@ -1980,7 +2120,7 @@ act_open:
 	jr	z,op_lock
 	dec	a
 	ld	(de),a
-	ld	(hl),80h
+	call	floorcell
 	ld	hl,M_OPENED
 	jp	msg
 op_lock:
@@ -2059,7 +2199,7 @@ at_hit:	ld	hl,M_HIT
 at_kill:
 	ld	a,4
 	call	cellv
-	ld	(hl),80h
+	call	floorcell
 	ld	hl,0
 	ld	(gaddr),hl
 	ld	hl,M_KILL
@@ -2074,6 +2214,8 @@ at_air:	ld	hl,M_AIR
 	jp	msg
 
 act_look:
+	call	look_item	; LOOK/EXAMINE <script item>
+	ret	z
 	ld	hl,M_FACE
 	call	msg
 	ld	a,(dir)
@@ -2152,6 +2294,8 @@ lk_grd:	ld	de,M_LGRD	; the guardian's own description, if it has one
 	jr	lk_here
 lk_msg:	call	msg
 lk_here:			; and what is underfoot (without setting anything off)
+	ld	c,2
+	call	listitems
 	call	herecode
 	push	af
 	call	getobj
@@ -2202,7 +2346,9 @@ iv_k2:	inc	c
 	call	putdeca
 	ld	hl,M_POTS
 	call	msgc
-iv_2:	call	newline
+iv_2:	ld	c,1		; script items carried
+	call	listitems
+	call	newline
 	ld	hl,(gold)
 	call	putdec
 	ld	hl,M_GP
@@ -2315,7 +2461,7 @@ tk_heal:
 	jr	tk_done
 tk_leave:
 	ld	hl,(npccell)	; the character steps aside: the cell is free
-	ld	(hl),80h
+	call	floorcell
 	ld	hl,M_VANISH
 	call	msg
 tk_done:
@@ -2635,6 +2781,902 @@ sd_1:	dec	bc
 	xor	a
 	ret
 
+; ===========================================================================
+;  Adventure scripting: two-word parser, items, flags, counters and rules
+; ===========================================================================
+; Each level can carry a script compiled by ZorEdit (see README):
+;  items: db count, then per item 6 bytes: x, y, noun, flags (bit 0 = can be
+;         carried), name text, description text. Location x = 0 means
+;         nowhere (y = 0) or carried (y = 1).
+;  rules: db count, then per rule: verb, noun, conditions, actions, followed
+;         by 4 bytes (op, a, b, c) per condition and per action.
+;         verb 0 = every turn, 255 = on arriving in a cell; noun 0 = any.
+;         A condition whose op has bit 7 set is negated.
+;  texts: db count, then dw offsets (from the pack start) of each text, 1-based.
+; The pack's vocabulary (PK_VOCAB): entries db type (1 verb, 2 noun), id,
+; word, 0, ending with type 0. Built-in verbs have ids 1-31, script verbs 32+.
+; Bit 6 of a maze cell is set while a script item lies there.
+
+floorcell:			; make cell HL bare (seen) floor, keeping the item bit
+	ld	a,(hl)
+	and	40h
+	or	80h
+	ld	(hl),a
+	ret
+
+findword:			; HL = typed word, C = type -> A = id, 0 if unknown
+	push	hl
+	ex	de,hl		; DE = typed word
+	ld	hl,(vocabp)
+	ld	a,h
+	or	l
+	jr	z,fw_no
+fw_1:	ld	a,(hl)		; entry type
+	or	a
+	jr	z,fw_no
+	cp	c
+	inc	hl
+	ld	b,(hl)		; its id
+	inc	hl
+	jr	nz,fw_skip
+	push	de
+fw_2:	ld	a,(de)
+	cp	' '+1		; typed word ended (space or 0)?
+	jr	c,fw_end
+	cp	(hl)
+	jr	nz,fw_mis
+	inc	hl
+	inc	de
+	jr	fw_2
+fw_end:	ld	a,(hl)
+	or	a
+	jr	nz,fw_mis
+	pop	de
+	ld	a,b
+	pop	hl
+	ret
+fw_mis:	pop	de
+fw_skip: ld	a,(hl)		; on to the next entry
+	inc	hl
+	or	a
+	jr	nz,fw_skip
+	jr	fw_1
+fw_no:	xor	a
+	pop	hl
+	ret
+
+bverb:				; A = built-in verb id -> its handler and turn flag
+	ld	c,a
+	ld	de,VOCAB
+bi_1:	ld	a,(de)
+	or	a
+	jr	z,bi_no
+bi_2:	ld	a,(de)		; skip the word
+	inc	de
+	or	a
+	jr	nz,bi_2
+	ld	a,(de)
+	ld	b,a		; turn flag
+	inc	de
+	ld	a,(de)		; id
+	inc	de
+	cp	c
+	jr	z,bi_hit
+	inc	de
+	inc	de
+	jr	bi_1
+bi_hit:	ld	a,b
+	ld	(tflag),a
+	ld	a,(de)
+	ld	l,a
+	inc	de
+	ld	a,(de)
+	ld	h,a
+	ld	(vhandler),hl
+	ret
+bi_no:	ld	hl,0
+	ld	(vhandler),hl
+	ld	a,1
+	ld	(tflag),a
+	ret
+
+; ---- rules ---------------------------------------------------------------------
+runverb:			; try the rules for (verbid, nounid)
+	xor	a		; -> A: 0 no rule for this verb, 1 none applied,
+	ld	(rres),a	;       2 a rule acted, 3 acted and said "continue"
+	ld	(contflag),a
+	ld	hl,(lrules)
+	ld	a,h
+	or	l
+	ret	z
+	ld	b,(hl)
+	inc	hl
+	ld	a,b
+	or	a
+	ret	z
+rvb_1:	push	bc
+	ld	(rptr),hl
+	ld	a,(verbid)
+	cp	(hl)
+	jr	nz,rvb_next
+	inc	hl
+	ld	a,(hl)		; noun 0 = any
+	or	a
+	jr	z,rvb_ok
+	ld	c,a
+	ld	a,(nounid)
+	cp	c
+	jr	nz,rvb_next
+rvb_ok:	ld	a,1
+	ld	(rres),a
+	ld	hl,(rptr)
+	call	tryrule
+	jr	nz,rvb_next
+	pop	bc
+	ld	a,(contflag)
+	or	a
+	ld	a,2
+	ret	z
+	inc	a
+	ret
+rvb_next:
+	ld	hl,(rptr)
+	call	nextrule
+	pop	bc
+	djnz	rvb_1
+	ld	a,(rres)
+	ret
+
+runauto:			; A = 0 every-turn rules, 255 arrival rules: run all that apply
+	ld	(autocode),a
+	ld	hl,(lrules)
+	ld	a,h
+	or	l
+	ret	z
+	ld	b,(hl)
+	inc	hl
+	ld	a,b
+	or	a
+	ret	z
+ra_1:	push	bc
+	ld	(rptr),hl
+	ld	a,(autocode)
+	cp	(hl)
+	call	z,tryrule
+	ld	hl,(rptr)
+	call	nextrule
+	pop	bc
+	djnz	ra_1
+	ret
+
+nextrule:			; HL = rule -> HL = the next one
+	push	hl
+	inc	hl
+	inc	hl
+	ld	a,(hl)
+	inc	hl
+	add	a,(hl)
+	add	a,a
+	add	a,a
+	add	a,4
+	pop	hl
+	jp	addhla
+
+tryrule:			; HL = rule: if all conditions hold, do the actions (Z)
+	inc	hl
+	inc	hl
+	ld	b,(hl)		; conditions
+	inc	hl
+	ld	c,(hl)		; actions
+	inc	hl
+	ld	a,b
+	or	a
+	jr	z,tr_act
+tr_c:	push	bc
+	call	evalcond
+	pop	bc
+	ret	nz		; a condition failed
+	djnz	tr_c
+tr_act:	ld	a,c
+	or	a
+	jr	z,tr_end
+	ld	b,c
+tr_a:	push	bc
+	call	doact
+	pop	bc
+	djnz	tr_a
+tr_end:	ld	a,(idirty)	; items moved: refresh the maze item bits
+	or	a
+	call	nz,itembits
+	xor	a
+	ret
+
+getargs:			; HL -> op,a,b,c: copy to cop..cc, HL past them
+	ld	de,cop
+	ld	bc,4
+	ldir
+	ret
+
+evalcond:			; HL = condition -> Z if it holds; HL past it
+	call	getargs
+	push	hl
+	ld	a,(cop)
+	and	7Fh
+	ld	hl,CONDTAB
+	call	ptrtab
+	call	jphl
+	ld	a,0
+	jr	nz,ec_1
+	inc	a		; A = 1 if true
+ec_1:	ld	b,a
+	ld	a,(cop)		; negated?
+	rlca
+	and	1
+	xor	b
+	pop	hl
+	cp	1
+	ret
+
+doact:				; HL = action: do it; HL past it
+	call	getargs
+	push	hl
+	ld	a,(cop)
+	ld	hl,ACTTAB
+	call	ptrtab
+	call	jphl
+	pop	hl
+	ret
+
+jphl:	jp	(hl)
+
+; ---- items ---------------------------------------------------------------------
+itemloc:			; A = item -> HL = its location (x, y) in ILOCS
+	add	a,a
+	ld	hl,ILOCS
+	jp	addhla
+
+itemrec:			; A = item -> HL = its 6-byte record in the pack
+	ld	c,a
+	add	a,a
+	add	a,c
+	add	a,a
+	ld	hl,(litems)
+	inc	hl
+	jp	addhla
+
+istate:				; A = item -> A: 0 nowhere, 1 carried, 2 here, 3 elsewhere
+	call	itemloc
+	ld	a,(hl)
+	or	a
+	jr	nz,is_1
+	inc	hl
+	ld	a,(hl)
+	ret
+is_1:	ld	e,a
+	inc	hl
+	ld	d,(hl)
+	ld	a,(px)
+	cp	e
+	jr	nz,is_2
+	ld	a,(py)
+	cp	d
+	jr	nz,is_2
+	ld	a,2
+	ret
+is_2:	ld	a,3
+	ret
+
+iname:				; A = item -> HL = its name text
+	call	itemrec
+	ld	de,4
+	add	hl,de
+	ld	a,(hl)
+	jp	text
+
+finditem:			; item with noun (nounid) carried (C=1), here (2), either (3)
+	ld	a,(nitems)	; -> A = item, or 0FFh
+	or	a
+	jr	z,fi_no
+	ld	b,a
+	xor	a
+fi_1:	ld	(fitem),a
+	push	bc
+	call	itemrec
+	inc	hl
+	inc	hl
+	ld	a,(nounid)
+	cp	(hl)
+	jr	nz,fi_n
+	ld	a,(fitem)
+	call	istate
+	pop	bc
+	push	bc
+	cp	c
+	jr	z,fi_hit
+	ld	e,a
+	ld	a,c
+	cp	3
+	jr	nz,fi_n
+	ld	a,e
+	dec	a
+	cp	2
+	jr	c,fi_hit
+fi_n:	pop	bc
+	ld	a,(fitem)
+	inc	a
+	djnz	fi_1
+fi_no:	ld	a,0FFh
+	ret
+fi_hit:	pop	bc
+	ld	a,(fitem)
+	ret
+
+firsthere:			; -> A = first item lying here, or 0FFh
+	ld	a,(nitems)
+	or	a
+	jr	z,fh_no
+	ld	b,a
+	xor	a
+fh_1:	ld	(fitem),a
+	push	bc
+	call	istate
+	pop	bc
+	cp	2
+	ld	a,(fitem)
+	ret	z
+	inc	a
+	djnz	fh_1
+fh_no:	ld	a,0FFh
+	ret
+
+listitems:			; print the items in state C (1 carried, 2 here)
+	ld	a,(nitems)	; as "YOU SEE <NAME>." (here) or "<NAME>" (carried)
+	or	a
+	ret	z
+	ld	b,a
+	xor	a
+li_1:	ld	(fitem),a
+	push	bc
+	call	istate
+	pop	bc
+	cp	c
+	jr	nz,li_n
+	push	bc
+	ld	a,(fitem)
+	call	iname
+	pop	bc
+	push	bc
+	ld	a,c
+	cp	2
+	jr	nz,li_c
+	push	hl
+	ld	hl,M_YOUSEE
+	call	msg
+	pop	hl
+	call	msgc
+	ld	a,'.'
+	call	putc
+	jr	li_d
+li_c:	call	msg
+li_d:	pop	bc
+li_n:	ld	a,(fitem)
+	inc	a
+	djnz	li_1
+	ret
+
+setloc:				; item A goes to E = x, D = y
+	push	de
+	call	itemloc
+	pop	de
+	ld	(hl),e
+	inc	hl
+	ld	(hl),d
+	ld	a,1
+	ld	(idirty),a
+	ret
+
+itembits:			; set bit 6 on exactly the cells where items lie
+	xor	a
+	ld	(idirty),a
+	ld	hl,MAZE
+	ld	bc,32*24
+ib_1:	res	6,(hl)
+	inc	hl
+	dec	bc
+	ld	a,b
+	or	c
+	jr	nz,ib_1
+	ld	a,(nitems)
+	or	a
+	ret	z
+	ld	b,a
+	ld	hl,ILOCS
+ib_2:	ld	e,(hl)
+	inc	hl
+	ld	d,(hl)
+	inc	hl
+	ld	a,e
+	or	a
+	jr	z,ib_3
+	push	hl
+	push	bc
+	call	caddr
+	ld	a,h
+	or	l
+	jr	z,ib_4
+	set	6,(hl)
+ib_4:	pop	bc
+	pop	hl
+ib_3:	djnz	ib_2
+	ret
+
+text:				; A = text number -> HL = the text ("" for 0)
+	or	a
+	jr	z,tx_none
+	ld	hl,(ltexts)
+	ld	b,a
+	ld	a,h
+	or	l
+	jr	z,tx_none
+	ld	a,b
+	dec	a
+	ld	e,a
+	ld	d,0
+	ex	de,hl
+	add	hl,hl
+	ex	de,hl
+	inc	hl
+	add	hl,de
+	ld	e,(hl)
+	inc	hl
+	ld	d,(hl)
+	ex	de,hl
+	jp	packoff
+tx_none: ld	hl,M_EMPTY
+	ret
+
+aheadxy:			; E,D = the cell in front of the player
+	ld	a,(dir)
+	call	getvec
+	ld	a,(px)
+	add	a,b
+	ld	e,a
+	ld	a,(py)
+	add	a,c
+	ld	d,a
+	ret
+
+flagbit:			; A = flag 0-31 -> HL = its byte, A = its bit mask
+	ld	c,a
+	rrca
+	rrca
+	rrca
+	and	3
+	ld	hl,FLAGS
+	call	addhla
+	ld	a,c
+	and	7
+	ld	b,a
+	inc	b
+	ld	a,80h
+fb_1:	rlca
+	djnz	fb_1
+	ret
+
+cptr:				; HL = counter (ca)
+	ld	a,(ca)
+	and	7
+	ld	hl,COUNTERS
+	jp	addhla
+
+; ---- conditions: Z if true ----------------------------------------------------
+CONDTAB: dw	c_false,c_carried,c_here,c_present,c_exists,c_at,c_flag,c_cntge
+	dw	c_cntlt,c_facing,c_chance,c_has,c_ahead
+c_true:	xor	a
+	ret
+c_false: or	1
+	ret
+c_carried:
+	ld	a,(ca)
+	call	istate
+	cp	1
+	ret
+c_here:	ld	a,(ca)
+	call	istate
+	cp	2
+	ret
+c_present:
+	ld	a,(ca)
+	call	istate
+	cp	1
+	ret	z
+	cp	2
+	ret
+c_exists:
+	ld	a,(ca)
+	call	istate
+	or	a
+	jp	z,c_false
+	jp	c_true
+c_at:	ld	a,(px)
+	ld	b,a
+	ld	a,(ca)
+	cp	b
+	ret	nz
+	ld	a,(py)
+	ld	b,a
+	ld	a,(cb)
+	cp	b
+	ret
+c_flag:	ld	a,(ca)
+	call	flagbit
+	and	(hl)
+	jp	z,c_false
+	jp	c_true
+c_cntge:
+	call	cptr
+	ld	a,(cb)
+	ld	b,a
+	ld	a,(hl)
+	cp	b
+	jp	c,c_false
+	jp	c_true
+c_cntlt:
+	call	cptr
+	ld	a,(cb)
+	ld	b,a
+	ld	a,(hl)
+	cp	b
+	jp	c,c_true
+	jp	c_false
+c_facing:
+	call	aheadxy
+	call	caddr
+	ld	a,h
+	or	l
+	ld	a,C_WALL
+	jr	z,cf_1
+	ld	a,(hl)
+	and	3Fh
+cf_1:	ld	b,a
+	ld	a,(ca)
+	cp	b
+	ret
+c_chance:
+	call	rnd
+	ld	a,(ca)
+	ld	b,a
+	ld	a,l
+	cp	b
+	jp	c,c_true
+	jp	c_false
+c_has:	ld	a,(ca)		; 0 sword, 1 amulet, 2-5 key colour, 6 potion, 7 gold >= b+256c
+	or	a
+	jr	nz,ch_1
+	ld	a,(hassw)
+	jr	ch_nz
+ch_1:	cp	1
+	jr	nz,ch_2
+	ld	a,(hasam)
+	jr	ch_nz
+ch_2:	cp	6
+	jr	nc,ch_3
+	sub	2
+	ld	hl,KEYS
+	call	addhla
+	ld	a,(hl)
+	jr	ch_nz
+ch_3:	jr	nz,ch_4
+	ld	a,(potions)
+	jr	ch_nz
+ch_4:	ld	hl,(gold)
+	ld	a,(cb)
+	ld	e,a
+	ld	a,(cc)
+	ld	d,a
+	or	a
+	sbc	hl,de
+	jp	c,c_false
+	jp	c_true
+ch_nz:	or	a
+	jp	z,c_false
+	jp	c_true
+c_ahead:
+	call	aheadxy
+	ld	a,(ca)
+	cp	e
+	ret	nz
+	ld	a,(cb)
+	cp	d
+	ret
+
+; ---- actions -------------------------------------------------------------------
+ACTTAB:	dw	a_none,a_say,a_speak,a_set,a_clear,a_get,a_drop,a_destroy
+	dw	a_put,a_swap,a_cell,a_goto,a_cset,a_cadd,a_csub,a_score
+	dw	a_hurt,a_heal,a_give,a_take,a_win,a_die,a_inv,a_look
+	dw	a_cont
+a_none:	ret
+a_say:	ld	a,(ca)
+	call	text
+	jp	msg
+a_speak:
+	ld	a,(ca)
+	call	text
+	ld	a,1
+	ld	(keepview),a
+	jp	speak
+a_set:	ld	a,(ca)
+	call	flagbit
+	or	(hl)
+	ld	(hl),a
+	ret
+a_clear:
+	ld	a,(ca)
+	call	flagbit
+	cpl
+	and	(hl)
+	ld	(hl),a
+	ret
+a_get:	ld	de,0100h	; carried
+	jr	a_loc
+a_drop:	ld	a,(px)
+	ld	e,a
+	ld	a,(py)
+	ld	d,a
+	jr	a_loc
+a_destroy:
+	ld	de,0		; nowhere
+	jr	a_loc
+a_put:	ld	a,(cb)
+	ld	e,a
+	ld	a,(cc)
+	ld	d,a
+a_loc:	ld	a,(ca)
+	jp	setloc
+a_swap:	ld	a,(ca)
+	call	itemloc
+	push	hl
+	ld	a,(cb)
+	call	itemloc
+	pop	de
+	ld	b,2
+as_1:	ld	a,(de)
+	ld	c,(hl)
+	ld	(hl),a
+	ld	a,c
+	ld	(de),a
+	inc	hl
+	inc	de
+	djnz	as_1
+	ld	a,1
+	ld	(idirty),a
+	ret
+a_cell:	ld	a,(ca)
+	ld	e,a
+	ld	a,(cb)
+	ld	d,a
+	call	caddr
+	ld	a,h
+	or	l
+	ret	z
+	ld	a,(hl)
+	and	0C0h
+	ld	b,a
+	ld	a,(cc)
+	or	b
+	ld	(hl),a
+	ret
+a_goto:	ld	a,(ca)
+	ld	(px),a
+	ld	a,(cb)
+	ld	(py),a
+	call	herecode
+	set	7,(hl)
+	ret
+a_cset:	call	cptr
+	ld	a,(cb)
+	ld	(hl),a
+	ret
+a_cadd:	call	cptr
+	ld	a,(cb)
+	add	a,(hl)
+	jr	nc,ac_1
+	ld	a,255
+ac_1:	ld	(hl),a
+	ret
+a_csub:	call	cptr
+	ld	a,(cb)
+	ld	b,a
+	ld	a,(hl)
+	sub	b
+	jr	nc,ac_1
+	xor	a
+	jr	ac_1
+a_score:
+	ld	hl,(points)
+	ld	a,(ca)
+	ld	e,a
+	ld	a,(cb)
+	ld	d,a
+	add	hl,de
+	ld	(points),hl
+	ret
+a_hurt:	ld	a,(ca)
+	ld	b,a
+	jp	hurt
+a_heal:	ld	a,(maxhp)
+	ld	c,a
+	ld	a,(ca)
+	call	orelse
+	ld	b,a
+	call	heal_by
+	ld	hl,M_HPIS
+	call	msg
+	ld	a,(hp)
+	jp	putdeca
+a_give:	ld	a,(ca)		; 0 sword, 1 amulet, 2-5 key, 6 potion, 7 gold b+256c
+	or	a
+	jr	nz,ag_1
+	inc	a
+	ld	(hassw),a
+	ret
+ag_1:	cp	1
+	jr	nz,ag_2
+	ld	(hasam),a
+	ret
+ag_2:	cp	6
+	jr	nc,ag_3
+	sub	2
+	ld	hl,KEYS
+	call	addhla
+	inc	(hl)
+	ret
+ag_3:	jr	nz,ag_4
+	ld	a,(potions)
+	cp	16
+	ret	nc
+	ld	hl,PHEAL
+	call	addhla
+	ld	a,(heal)
+	ld	(hl),a
+	ld	hl,potions
+	inc	(hl)
+	ret
+ag_4:	ld	hl,(gold)
+	ld	a,(cb)
+	ld	e,a
+	ld	a,(cc)
+	ld	d,a
+	add	hl,de
+	ld	(gold),hl
+	ret
+a_take:	ld	a,(ca)		; the reverse of a_give
+	or	a
+	jr	nz,at2_1
+	ld	(hassw),a
+	ret
+at2_1:	cp	1
+	jr	nz,at2_2
+	xor	a
+	ld	(hasam),a
+	ret
+at2_2:	cp	6
+	jr	nc,at2_3
+	sub	2
+	ld	hl,KEYS
+	call	addhla
+at2_dec: ld	a,(hl)
+	or	a
+	ret	z
+	dec	(hl)
+	ret
+at2_3:	jr	nz,at2_4
+	ld	hl,potions
+	jr	at2_dec
+at2_4:	ld	hl,(gold)
+	ld	a,(cb)
+	ld	e,a
+	ld	a,(cc)
+	ld	d,a
+	or	a
+	sbc	hl,de
+	jr	nc,at2_5
+	ld	hl,0
+at2_5:	ld	(gold),hl
+	ret
+a_win:	jp	win
+a_die:	ld	a,(ca)
+	call	text
+	call	msg
+	jp	death
+a_inv:	jp	act_inv
+a_look:	jp	act_look
+a_cont:	ld	a,1
+	ld	(contflag),a
+	ret
+
+; ---- built-in commands for script items ------------------------------------
+take_item:			; take item A (if it can be carried)
+	ld	(curitem),a
+	call	itemrec
+	inc	hl
+	inc	hl
+	inc	hl
+	bit	0,(hl)
+	jr	z,ti_no
+	ld	de,0100h
+	ld	a,(curitem)
+	call	setloc
+	call	itembits
+	ld	a,(curitem)
+	call	iname
+	push	hl
+	ld	hl,M_TAKE
+	call	msg
+	pop	hl
+	call	msgc
+	ld	a,'.'
+	jp	putc
+ti_no:	ld	hl,M_CANTCARRY
+	jp	msg
+
+act_drop:
+	ld	a,(nounid)
+	or	a
+	jr	nz,dp_1
+	ld	hl,M_DROPWHAT
+	jp	msg
+dp_1:	ld	c,1
+	call	finditem
+	cp	0FFh
+	jr	nz,dp_2
+	ld	hl,M_NOTHAVE
+	jp	msg
+dp_2:	push	af
+	ld	a,(px)
+	ld	e,a
+	ld	a,(py)
+	ld	d,a
+	pop	af
+	call	setloc
+	call	itembits
+	ld	hl,M_DROPPED
+	jp	msg
+
+look_item:			; LOOK/EXAMINE <noun>: Z if it was a script item
+	ld	a,(nounid)
+	or	a
+	jr	z,lki_no
+	ld	c,3
+	call	finditem
+	cp	0FFh
+	jr	z,lki_no
+	call	itemrec
+	ld	de,5
+	add	hl,de
+	ld	a,(hl)
+	or	a
+	ld	hl,M_NOSPECIAL
+	jr	z,lki_1
+	call	text
+lki_1:	call	msg
+	xor	a
+	ret
+lki_no:	or	1
+	ret
+
+arrive:				; arriving in a cell: built-in events, items, arrival rules
+	call	arrive0
+	ld	c,2
+	call	listitems
+	ld	a,255
+	jp	runauto
+
+gturn:				; end of a turn: guardians, then every-turn rules
+	call	gguard
+	xor	a
+	jp	runauto
+
 act_help:
 	ld	hl,M_HELP
 	jp	msg
@@ -2660,6 +3702,8 @@ score:				; HL = gold + 5*hp (+100 with amulet)
 	add	hl,de
 	ld	de,(gold)
 	add	hl,de
+	ld	de,(points)	; + points from the script
+	add	hl,de
 	ld	a,(amulets)
 	ld	de,100
 sc_1:	or	a
@@ -2679,7 +3723,7 @@ act_quit:
 	jp	msg
 
 ; ---- end of every turn: the guardian lashes out at a neighbour ------------
-gturn:	ld	hl,(moves)
+gguard:	ld	hl,(moves)
 	inc	hl
 	ld	(moves),hl
 	call	herecode
@@ -2695,7 +3739,7 @@ gturn:	ld	hl,(moves)
 gt_chk:	push	hl
 	add	hl,de
 	ld	a,(hl)
-	and	7Fh
+	and	3Fh
 	cp	C_GUARD
 	jr	z,gt_hit
 	pop	hl
@@ -2816,104 +3860,108 @@ MAPCH:	db	88h,80h		; floor (faint dot)
 	db	"&",80h		; hermit
 	db	"&",80h		; merchant
 	db	"&",80h		; ghost
+	db	"+",80h		; a script item
 
 DEFOBJ:	db	0,0,0,0,0,0,0,0	; parameters of a cell without a record
 LKSPACE: dw	M_LSIGN,M_LTRAP,M_LTELE,M_LFOUNT,M_LPLATE,M_LWALL
 
 
 ; vocabulary: word, 0, takes-a-turn flag, handler
-VOCAB:	db	"F",0,1
+; vocabulary: word, 0, takes-a-turn flag, verb id, handler
+VOCAB:	db	"F",0,1,1
 	dw	act_fwd
-	db	"FORWARD",0,1
+	db	"FORWARD",0,1,1
 	dw	act_fwd
-	db	"GO",0,1
+	db	"GO",0,1,1
 	dw	act_fwd
-	db	"WALK",0,1
+	db	"WALK",0,1,1
 	dw	act_fwd
-	db	"B",0,1
+	db	"B",0,1,2
 	dw	act_back
-	db	"BACK",0,1
+	db	"BACK",0,1,2
 	dw	act_back
-	db	"L",0,1
+	db	"L",0,1,3
 	dw	act_left
-	db	"LEFT",0,1
+	db	"LEFT",0,1,3
 	dw	act_left
-	db	"R",0,1
+	db	"R",0,1,4
 	dw	act_right
-	db	"RIGHT",0,1
+	db	"RIGHT",0,1,4
 	dw	act_right
-	db	"T",0,1
+	db	"T",0,1,5
 	dw	act_turn
-	db	"TURN",0,1
+	db	"TURN",0,1,5
 	dw	act_turn
-	db	"AROUND",0,1
+	db	"AROUND",0,1,6
 	dw	act_around
-	db	"G",0,1
+	db	"G",0,1,7
 	dw	act_take
-	db	"GET",0,1
+	db	"GET",0,1,7
 	dw	act_take
-	db	"TAKE",0,1
+	db	"TAKE",0,1,7
 	dw	act_take
-	db	"O",0,1
+	db	"O",0,1,8
 	dw	act_open
-	db	"OPEN",0,1
+	db	"OPEN",0,1,8
 	dw	act_open
-	db	"UNLOCK",0,1
+	db	"UNLOCK",0,1,8
 	dw	act_open
-	db	"TALK",0,1
+	db	"TALK",0,1,17
 	dw	act_talk
-	db	"SPEAK",0,1
+	db	"SPEAK",0,1,17
 	dw	act_talk
-	db	"ASK",0,1
+	db	"ASK",0,1,17
 	dw	act_talk
-	db	"GREET",0,1
+	db	"GREET",0,1,17
 	dw	act_talk
-	db	"HELLO",0,1
+	db	"HELLO",0,1,17
 	dw	act_talk
-	db	"U",0,1
+	db	"U",0,1,9
 	dw	act_use
-	db	"USE",0,1
+	db	"USE",0,1,9
 	dw	act_use
-	db	"A",0,1
+	db	"A",0,1,10
 	dw	act_attack
-	db	"ATTACK",0,1
+	db	"ATTACK",0,1,10
 	dw	act_attack
-	db	"FIGHT",0,1
+	db	"FIGHT",0,1,10
 	dw	act_attack
-	db	"KILL",0,1
+	db	"KILL",0,1,10
 	dw	act_attack
-	db	"HIT",0,1
+	db	"HIT",0,1,10
 	dw	act_attack
-	db	"D",0,1
+	db	"D",0,1,11
 	dw	act_drink
-	db	"DRINK",0,1
+	db	"DRINK",0,1,11
 	dw	act_drink
-	db	"X",0,0
+	db	"X",0,0,12
 	dw	act_look
-	db	"LOOK",0,0
+	db	"LOOK",0,0,12
 	dw	act_look
-	db	"EXAMINE",0,0
+	db	"EXAMINE",0,0,12
 	dw	act_look
-	db	"I",0,0
+	db	"I",0,0,13
 	dw	act_inv
-	db	"INV",0,0
+	db	"INV",0,0,13
 	dw	act_inv
-	db	"INVENTORY",0,0
+	db	"INVENTORY",0,0,13
 	dw	act_inv
-	db	"H",0,0
+	db	"H",0,0,14
 	dw	act_help
-	db	"HELP",0,0
+	db	"HELP",0,0,14
 	dw	act_help
-	db	"?",0,0
+	db	"?",0,0,14
 	dw	act_help
-	db	"S",0,0
+	db	"S",0,0,15
 	dw	act_score
-	db	"SCORE",0,0
+	db	"SCORE",0,0,15
 	dw	act_score
-	db	"Q",0,0
+	db	"Q",0,0,16
 	dw	act_quit
-	db	"QUIT",0,0
+	db	"QUIT",0,0,16
 	dw	act_quit
+	db	"DROP",0,1,18
+	dw	act_drop
 	db	0
 
 ; ---- messages (each line at most 30 characters, 13 = new line) ------------
@@ -2921,7 +3969,7 @@ M_HELP:	db	"ARROWS: UP/DOWN = STEP FWD/BK",13
 	db	"LEFT/RIGHT = TURN. OR TYPE:",13
 	db	"F B L R TURN  TAKE OPEN USE",13
 	db	"ATTACK DRINK TALK LOOK INV",13
-	db	"SCORE QUIT. ENTER = DO IT.",0
+	db	"SCORE QUIT DROP. TRY ANYTHING!",0
 M_LEVEL:	db	"LEVEL ",0
 M_LVDONE:	db	"YOU ESCAPE WITH THE AMULET!",13
 	db	"LEVEL COMPLETE. PRESS ENTER",13
@@ -2934,9 +3982,17 @@ M_BIG:	db	"LEVEL FILE TOO BIG FOR MEMORY",0
 M_BADPK:	db	"NOT A VAULTS OF ZOR LEVEL FILE",0
 M_ANYKEY:	db	"PRESS ANY KEY TO RETURN TO TRSDOS.",0
 DEFNAME:	db	"ZOR/LEV",13
-PKSIG:	db	"ZORPACK",3
+PKSIG:	db	"ZORPACK",4
 M_ECHO:	db	"> ",0
 M_UNK:	db	"I DON'T UNDERSTAND THAT.",0
+M_CANT:	db	"YOU CAN'T DO THAT... YET.",0
+M_NOSEE: db	"I DON'T SEE IT HERE.",0
+M_CANTCARRY: db	"YOU CAN'T CARRY THAT.",0
+M_DROPWHAT: db	"DROP WHAT?",0
+M_NOTHAVE: db	"YOU'RE NOT CARRYING IT.",0
+M_DROPPED: db	"DROPPED.",0
+M_NOSPECIAL: db	"YOU SEE NOTHING SPECIAL.",0
+M_EMPTY: db	0
 M_BUMP:	db	"YOU BUMP INTO SOLID STONE.",0
 M_DOOR:	db	"THE DOOR IS LOCKED.",0
 M_BARS:	db	"THE GUARDIAN BARS THE WAY!",0
@@ -3055,6 +4111,29 @@ fcol:	ds	1
 ftr:	ds	1
 ftc:	ds	1
 keepview: ds	1
+verbid:	ds	1		; the command being obeyed
+nounid:	ds	1
+vhandler: ds	2
+rres:	ds	1
+contflag: ds	1
+idirty:	ds	1
+autocode: ds	1
+rptr:	ds	2
+cop:	ds	1		; condition/action being evaluated: op, a, b, c
+ca:	ds	1
+cb:	ds	1
+cc:	ds	1
+fitem:	ds	1
+curitem: ds	1
+nitems:	ds	1
+ILOCS: ds	MAXITEMS*2
+FLAGS:	ds	4		; 32 script flags (whole game)
+COUNTERS: ds	8		; 8 script counters
+points:	ds	2
+vocabp:	ds	2
+litems:	ds	2
+lrules:	ds	2
+ltexts:	ds	2
 ghpmax:	ds	1
 gaddr:	ds	2
 level:	ds	1
@@ -3114,9 +4193,9 @@ STACK:
 ;  load ZOR/LEV from disk instead.
 ; ---------------------------------------------------------------------------
 BUILTIN:
-	db	"ZORPACK",3
-	dw	44
+	db	"ZORPACK",4
+	dw	46
 	db	0
-	ds	33
+	ds	35
 
 	end	entry

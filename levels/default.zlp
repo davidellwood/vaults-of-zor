@@ -64,6 +64,37 @@ map=
 ################################
 obj=1,21,0,1,0,6,WELCOME, YOUNG ONE. THE GUARDIAN FEARS ONLY STEEL: FIND THE SWORD FIRST, THEN THE KEY. TAKE THIS POTION FOR THE ROAD.
 obj2=1,21,GO NOW. THE AMULET WAITS BEYOND THE LOCKED DOOR.
+script=
+# A side quest in the style of the old two-word adventures.
+# Light the lantern, find the dark corner, move the loose stone.
+item lamp "A DUSTY LANTERN" at 11,21 nouns LANTERN,LAMP desc "AN OLD BRASS LANTERN. IT IS NOT LIT, BUT THERE IS OIL IN IT."
+item litlamp "A LIT LANTERN" nowhere nouns LANTERN,LAMP desc "THE LANTERN BURNS WITH A STEADY YELLOW FLAME."
+item ruby "A GLITTERING RUBY" nowhere nouns RUBY,GEM desc "A RUBY AS BIG AS A PIGEON EGG."
+synonym IGNITE = LIGHT
+synonym PUSH = MOVE
+synonym PULL = MOVE
+on LIGHT LAMP if carried lamp and flag noil then say "THERE IS NO OIL LEFT."
+on LIGHT LAMP if carried lamp then swap lamp litlamp; counter oil = 40;
+  say "THE WICK CATCHES. THE LANTERN GLOWS."
+on LIGHT LAMP if present litlamp then say "IT IS ALREADY LIT."
+on LIGHT LAMP if here lamp then say "PICK IT UP FIRST."
+on LIGHT any then say "YOU HAVE NOTHING TO LIGHT."
+on EXTINGUISH LAMP if carried litlamp then swap litlamp lamp; say "YOU PUT THE LANTERN OUT."
+synonym DOUSE = EXTINGUISH
+every turn if carried litlamp then sub oil 1
+every turn if carried litlamp and counter oil < 1 then swap litlamp lamp;
+  say "THE LANTERN SPUTTERS AND GOES OUT. THE OIL IS GONE."; set noil
+on arrive if at 29,21 and not present litlamp then say "THIS CORNER IS PITCH BLACK. YOU FEEL A COLD DRAUGHT."
+on arrive if at 29,21 and present litlamp and not flag moved then
+  say "BY LANTERN LIGHT YOU SEE A LOOSE STONE IN THE WALL."; set spotted
+on MOVE STONE if at 29,21 and flag spotted and not flag moved then put ruby at 29,21; set moved;
+  score 50; say "THE STONE SLIDES OUT. SOMETHING GLITTERS IN THE HOLE BEHIND IT!"
+on MOVE STONE if at 29,21 and not flag spotted then say "IT IS TOO DARK TO SEE ANY STONE."
+on MOVE STONE then say "WHAT STONE?"
+on EXAMINE STONE if flag spotted then say "IT IS LOOSE IN ITS SETTING."
+on RUB LAMP if present lamp then say "NOTHING HAPPENS. THIS IS NOT THAT KIND OF LANTERN."
+on RUB LAMP if present litlamp then say "OUCH! IT IS HOT."
+endscript
 
 [level]
 name=THE DEEP VAULTS
