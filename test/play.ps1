@@ -13,10 +13,11 @@ $argv = @('-iw', $Ready, '-id', '20')
 function Press($rm) { $script:argv += @('-ik', "$($rm[0])", ('{0:x}' -f $rm[1]), '-id', "$Hold", '-ik', "$($rm[0])", '0', '-id', "$Gap") }
 foreach ($t in ($Keys -split ' ')) {
     if ($t -eq '') { continue }
+    if ($t -eq 'WAIT') { $script:argv += @('-id', '420'); continue }   # let speech finish
     if ($named.ContainsKey($t)) { Press $named[$t]; continue }
     $word = $t; $enter = $false
     if ($t.EndsWith('/') -and $t.Length -gt 1) { $word = $t.Substring(0, $t.Length - 1); $enter = $true }
-    foreach ($c in $word.ToCharArray()) { Press $rows[[string]$c] }
+    foreach ($c in $word.ToCharArray()) { if ($c -eq '_') { Press $named['SPACE'] } else { Press $rows[[string]$c] } }
     if ($enter) { Press $named['ENTER'] }
 }
 if ($Burst -gt 0) {

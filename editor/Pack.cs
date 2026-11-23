@@ -779,7 +779,10 @@ namespace ZorEdit
             if (ladders > 1) r.Add("ERROR " + pre + "more than one ladder.");
             bool npcAmulet = l.Objs.Any(kv => l.Map[kv.Key / Level.W, kv.Key % Level.W] == Cell.Npc
                                               && (kv.Value.B == 1 || kv.Value.B == 2) && kv.Value.D == 8);
-            if (l.Count(Cell.Amulet) == 0 && !npcAmulet) r.Add("ERROR " + pre + "no amulet (A) to collect, and no character gives one.");
+            // the script may make the amulet appear ("cell X,Y amulet") or hand it over ("give amulet")
+            bool scriptAmulet = System.Text.RegularExpressions.Regex.IsMatch(l.Script ?? "",
+                @"\bcell\s+\d+\s*,\s*\d+\s+amulet\b|\bgive\s+amulet\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (l.Count(Cell.Amulet) == 0 && !npcAmulet && !scriptAmulet) r.Add("ERROR " + pre + "no amulet (A) to collect, and no character or script gives one.");
             foreach (KeyValuePair<int, ObjParams> kv in l.Objs)
             {
                 ObjParams q = kv.Value;
@@ -814,7 +817,9 @@ namespace ZorEdit
             if (r.Any(s => s.StartsWith("ERROR"))) return r;
 
             string why;
-            if (!Solve(l, out why)) r.Add("WARNING " + pre + why);
+            if (l.Count(Cell.Amulet) == 0 && scriptAmulet)
+                r.Add("NOTE " + pre + "the amulet comes from the script, so the play-through check can't follow this level; test it in the emulator.");
+            else if (!Solve(l, out why)) r.Add("WARNING " + pre + why);
             for (int colour = 0; colour < 4; colour++)
             {
                 int doors = 0, keys = 0;

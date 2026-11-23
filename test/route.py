@@ -4,6 +4,7 @@ usage: python route.py pack.zlp level  step step ...
   steps:  x,y        walk to cell x,y (doors and guardians block, secret walls don't)
           face:N     turn to face N/E/S/W
           clear:x,y  treat cell x,y as floor from now on (guardian killed, door opened)
+          pos:x,y    the player is now at x,y (after a teleporter)
           any other  passed through as keys (e.g. LOOK/ OPEN/ TAKE/)
 """
 import sys
@@ -49,6 +50,9 @@ def walk(t):
 for step in sys.argv[3:]:
     if step.startswith("face:"):
         face("NESW".index(step[5]))
+    elif step.startswith("pos:"):              # the player was moved (teleporter, goto)
+        x, y = map(int, step[4:].split(","))
+        pos = (x, y)
     elif step.startswith("clear:"):           # e.g. a guardian killed or a door opened
         x, y = map(int, step[6:].split(","))
         g[y][x] = "."

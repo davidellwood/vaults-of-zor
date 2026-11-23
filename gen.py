@@ -804,6 +804,149 @@ def add_script(g, start, info):
         "endscript"]
 
 
+# ---------------------------------------------------------------- level 4: the pyramid
+def pyramid_level():
+    """A hand-built pyramid: wide galleries below, the burial chamber at the apex.
+    Returns (map, obj and script lines)."""
+    g = [[WALL] * MW for _ in range(MH)]
+
+    def carve(x0, y0, x1, y1, code=FLOOR):
+        for y in range(y0, y1 + 1):
+            for x in range(x0, x1 + 1):
+                g[y][x] = code
+
+    # bottom level: entrance hall, galleries and side rooms
+    carve(11, 19, 20, 21)               # entrance hall
+    carve(3, 21, 10, 21)                # west gallery
+    carve(21, 21, 29, 21)               # east gallery
+    carve(2, 17, 5, 19); carve(3, 20, 3, 20)     # store room (shovel)
+    carve(7, 17, 9, 18); carve(8, 19, 8, 20)     # brazier room
+    carve(24, 17, 28, 19); carve(25, 20, 25, 20)  # sand chamber (scarab)
+    carve(15, 17, 15, 18)               # ramp north, sealed at 15,16
+    # middle level
+    carve(9, 15, 21, 15)                # middle gallery
+    carve(6, 13, 8, 15)                 # ankh room
+    carve(22, 13, 24, 15)               # idol room
+    carve(15, 11, 15, 14)               # mummy's corridor
+    carve(17, 12, 19, 13)               # hidden jewel room behind a false wall
+    # upper level and apex
+    carve(11, 10, 19, 10)               # upper gallery
+    carve(15, 5, 15, 9)                 # passage to the apex
+    carve(14, 2, 17, 3)                 # burial chamber
+
+    g[21][15] = LADDER
+    g[21][2] = FOUNT                    # the sacred basin
+    g[21][30] = MERCHANT                # a desert trader
+    g[19][13] = SIGN                    # hieroglyphs at the entrance
+    g[15][12] = SIGN                    # hieroglyphs in the middle gallery
+    g[15][18] = TRAP                    # hidden spikes
+    g[10][13] = TRAP                    # a visible pit, once only
+    g[13][15] = GUARD                   # the mummy
+    g[14][17] = SECRET                  # false wall to the jewel room
+    g[9][19] = GHOST                    # the priest's ghost
+    g[9][11] = TELE                     # sun disc back to the entrance
+    g[4][15] = DOOR                     # golden door to the burial chamber
+    g[21][5] = GOLD; g[21][27] = GOLD; g[15][10] = GOLD; g[13][22] = GOLD
+    g[17][9] = POTION
+
+    objs = [
+        "obj=13,19,0,0,0,0,THE HIEROGLYPHS WARN: WHO ENTERS THE HOUSE OF NEB-SENU SHALL MEET DEATH. "
+        "YET THE WISE KNOW THAT FIRE UNDOES THE DEAD, AND THAT NOT EVERY WALL IS STONE.",
+        "obj=12,15,0,0,0,0,HERE THE HIEROGLYPHS TELL OF AMENTEP, HIGH PRIEST OF NEB-SENU, "
+        "WHO SEALED THE TOMB AND GUARDS IT STILL. THE PAINTED ROOF STONE TO THE EAST HIDES A TREASURE.",
+        "obj=18,15,2,0,0,0,STONE SPIKES SPRING FROM THE FLOOR!",
+        "obj=13,10,3,1,1,0,YOU STUMBLE INTO A PIT OF OLD BONES AND CLAMBER OUT.",
+        "obj=15,13,0,2,30,0,A MUMMY IN ROTTING BANDAGES SHAMBLES TOWARDS YOU. NO BLADE COULD HARM IT.",
+        "obj=17,14,0,0,0,0,THE PAINTED STONE WAS ONLY CLOTH! YOU PUSH THROUGH.",
+        "obj=2,21,0,3,0,0,YOU DRINK FROM THE SACRED BASIN. THE WATER IS COOL AND SWEET.",
+        "obj=11,9,12,20,0,0,THE SUN DISC FLARES GOLD AND CARRIES YOU DOWN TO THE ENTRANCE HALL!",
+        "obj=15,4,3,0,0,0,",
+        "obj=30,21,1,2,10,6,WATER AND HEALING DRAUGHTS! A POTION FOR ONLY 10 GOLD PIECES.",
+        "obj2=30,21,MAY THE SANDS BE KIND TO YOU, FRIEND.",
+        "obj=19,9,2,0,0,0,I AM THE PRIEST WHO SEALED THIS TOMB. SPEAK MY NAME, THIEF, AND I MAY YET OPEN THE WAY.",
+    ]
+    script = ["script=",
+        "# THE SAND PYRAMID - a tomb adventure in the old two-word style.",
+        "# Torch from the brazier, scarab from the sand, the mummy burnt,",
+        "# the priest's name spoken, the curse warded off with the ankh.",
+        'item torch "AN UNLIT TORCH" at 11,19 nouns TORCH desc "A STICK WRAPPED IN OILY RAGS."',
+        'item littorch "A BURNING TORCH" nowhere nouns TORCH desc "IT CRACKLES AND SMOKES."',
+        'item brazier "A BURNING BRAZIER" at 8,17 fixed nouns BRAZIER,FIRE desc "FLAMES LEAP FROM A BRONZE BOWL. WHO KEEPS IT LIT?"',
+        'item shovel "A WOODEN SHOVEL" at 3,18 nouns SHOVEL,SPADE desc "LEFT BY SOME LESS LUCKY ROBBER."',
+        'item scarab "A GOLDEN SCARAB" nowhere nouns SCARAB,BEETLE desc "A BEETLE OF SOLID GOLD, FLAT ON ONE SIDE."',
+        'item ankh "A SILVER ANKH" at 6,13 nouns ANKH desc "THE SIGN OF LIFE. IT FEELS WARM."',
+        'item idol "A GOLDEN IDOL" at 24,13 nouns IDOL desc "A JACKAL-HEADED GOD WITH RUBY EYES."',
+        'item collar "A JEWELLED COLLAR" at 19,12 nouns COLLAR,JEWELS desc "LAPIS AND GOLD, FIT FOR A QUEEN."',
+        'item coffin "A STONE SARCOPHAGUS" at 16,2 fixed nouns SARCOPHAGUS,COFFIN,LID desc "CARVED WITH THE FACE OF NEB-SENU. THE LID IS HEAVY."',
+        "",
+        "# fire",
+        'on LIGHT TORCH if carried torch and present brazier then swap torch littorch; counter flame = 45;',
+        '  say "THE RAGS CATCH. YOUR TORCH BLAZES."',
+        'on LIGHT TORCH if carried littorch then say "IT IS ALREADY BURNING."',
+        'on LIGHT TORCH if carried torch then say "YOU HAVE NO FLAME. PERHAPS SOMEONE KEEPS A FIRE NEARBY."',
+        'every turn if carried littorch then sub flame 1',
+        'every turn if carried littorch and counter flame < 1 then swap littorch torch;',
+        '  say "YOUR TORCH GUTTERS OUT."',
+        'on EXAMINE BRAZIER if here brazier then say "FLAMES LEAP FROM A BRONZE BOWL. YOU COULD LIGHT SOMETHING HERE."',
+        "",
+        "# sand and the scarab",
+        'on arrive if at 27,18 and not flag dug then say "THE SAND HERE IS HEAPED IN A STRANGE MOUND."',
+        'on DIG any if at 27,18 and carried shovel and not flag dug then put scarab at 27,18; set dug;',
+        '  score 20; say "YOUR SHOVEL STRIKES METAL. A GOLDEN SCARAB GLINTS IN THE SAND!"',
+        'on DIG any if at 27,18 and not carried shovel then say "THE SAND IS TOO DEEP TO MOVE WITH YOUR HANDS."',
+        'on DIG any if carried shovel then say "YOU DIG A LITTLE AND FIND ONLY MORE SAND."',
+        'on DIG any then say "YOU HAVE NOTHING TO DIG WITH."',
+        "synonym EXCAVATE = DIG",
+        "",
+        "# the sealed wall",
+        'on arrive if at 15,17 and not flag sealopen then say "A WALL SEALS THE WAY NORTH. IN IT IS A HOLLOW SHAPED LIKE A BEETLE."',
+        'on PLACE SCARAB if at 15,17 and carried scarab then destroy scarab; cell 15,16 floor; set sealopen;',
+        '  score 20; say "THE SCARAB FITS EXACTLY. WITH A DEEP GRINDING THE WALL SINKS INTO THE FLOOR!"',
+        'on PLACE SCARAB if carried scarab then say "THERE IS NOWHERE TO PUT IT HERE."',
+        'on PLACE any then say "YOU HAVE NOTHING TO PLACE."',
+        "synonym INSERT = PLACE",
+        "synonym PUT = PLACE",
+        'on EXAMINE HOLLOW if at 15,17 and not flag sealopen then say "IT IS EXACTLY THE SHAPE OF A SCARAB BEETLE."',
+        "",
+        "# the mummy",
+        'on BURN MUMMY if ahead 15,13 and carried littorch then cell 15,13 floor; score 30;',
+        '  say "YOU THRUST THE TORCH INTO THE BANDAGES. THE MUMMY BURSTS INTO FLAME AND CRUMBLES TO ASH!"',
+        'on ATTACK MUMMY if ahead 15,13 and carried littorch then cell 15,13 floor; score 30;',
+        '  say "YOU THRUST THE TORCH INTO THE BANDAGES. THE MUMMY BURSTS INTO FLAME AND CRUMBLES TO ASH!"',
+        'on BURN MUMMY if ahead 15,13 then say "YOU NEED A FLAME TO DO THAT."',
+        'on BURN any then say "THERE IS NOTHING HERE TO BURN."',
+        "synonym SCORCH = BURN",
+        "",
+        "# the priest's ghost",
+        'on SAY AMENTEP if ahead 19,9 and not flag named then set named; give key3; score 20;',
+        '  speak "AMENTEP... IT HAS BEEN SO LONG SINCE ANYONE SPOKE MY NAME. TAKE THE GOLDEN KEY, AND MAY THE GODS FORGIVE YOU.";',
+        '  say "THE GHOST PRESSES A GOLDEN KEY INTO YOUR HAND."',
+        'on SAY AMENTEP if ahead 19,9 then speak "I HAVE GIVEN YOU ALL I HAVE. GO."',
+        'on SAY any if ahead 19,9 then speak "THAT IS NOT MY NAME."',
+        'on SAY any then say "YOUR WORDS ECHO DOWN THE EMPTY HALLS."',
+        "synonym CALL = SAY",
+        "",
+        "# the burial chamber and the curse",
+        'on arrive if at 15,3 and not flag cursed then say "THE BURIAL CHAMBER OF NEB-SENU! GOLD GLEAMS IN THE DUST."',
+        'on OPEN SARCOPHAGUS if here coffin and not flag cursed and carried ankh then cell 14,2 amulet; set cursed;',
+        '  say "THE LID GRINDS ASIDE. AN AMULET ROLLS FROM THE PHARAOH\'S HAND ONTO THE FLOOR!";',
+        '  say "A COLD WIND MOANS... BUT YOUR ANKH GLOWS AND THE CURSE PASSES YOU BY."',
+        'on OPEN SARCOPHAGUS if here coffin and not flag cursed then cell 14,2 amulet; set cursed;',
+        '  say "THE LID GRINDS ASIDE. AN AMULET ROLLS FROM THE PHARAOH\'S HAND ONTO THE FLOOR!";',
+        '  say "A COLD WIND MOANS. YOU HAVE BEEN CURSED!"',
+        'on OPEN SARCOPHAGUS if here coffin then say "THE PHARAOH SLEEPS. LET HIM BE."',
+        'on OPEN SARCOPHAGUS then say "IT IS TOO FAR AWAY. STAND BESIDE IT."',
+        'every turn if flag cursed and not carried ankh and chance 30 then hurt 1;',
+        '  say "THE PHARAOH\'S CURSE BURNS YOUR SKIN!"',
+        "",
+        "# treasures",
+        'on TAKE IDOL if here idol and not flag gotidol then set gotidol; score 40; continue',
+        'on TAKE COLLAR if here collar and not flag gotcollar then set gotcollar; score 40; continue',
+        'on EXAMINE ANKH if present ankh then say "THE SIGN OF LIFE. IT IS SAID TO WARD OFF CURSES."',
+        "endscript"]
+    return g, objs, script
+
+
 def write_default_pack():
     """Write levels/default.zlp, the editable level pack ZorEdit opens."""
     levels = [
@@ -851,6 +994,13 @@ def write_default_pack():
         out += ["".join(MAPSYM[g[y][x]] for x in range(MW)) for y in range(MH)]
         out += objs
         out.append("")
+    # level 4: the hand-built pyramid
+    g, objs, script = pyramid_level()
+    out += ["[level]", "name=THE SAND PYRAMID", "guardhp=3", "facing=E",
+            "intro=BEYOND THE VAULTS A PYRAMID LIES HALF-BURIED IN THE SAND. THE TOMB OF "
+            "PHARAOH NEB-SENU HOLDS THE LAST AMULET OF ZOR. THE DEAD DO NOT REST HERE.", "map="]
+    out += ["".join(MAPSYM[g[y][x]] for x in range(MW)) for y in range(MH)]
+    out += objs + script + [""]
     os.makedirs("levels", exist_ok=True)
     with open(os.path.join("levels", "default.zlp"), "w", newline="\r\n") as f:
         f.write("\n".join(out))
