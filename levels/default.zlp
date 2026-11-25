@@ -1,11 +1,11 @@
-; Vaults of Zor level pack - edit with ZorEdit.exe or any text editor
-; map: # wall  . floor  D door  H ladder (start)  G guardian
-;      K key  S sword  P potion  $ gold  A amulet
-;      ? sign  ^ trap  @ teleporter  W fountain  = pressure plate  % secret wall  & character
-; obj=x,y,a,b,c,d,text  sets the parameters of the cell at x,y (see README)
-; obj2=x,y,text         a character's speech once its deed is done
+; Vaults of Zor level pack, format 5 - edit with ZorEdit.exe or any text editor.
+; [object] sections define the kinds of object; a level's map is # wall and . floor,
+; and obj=X,Y,TYPE places an object (0,0 or 'nowhere' = not on the map yet,
+; 'carried' = the player has it). The o... lines after it set that object's
+; value, P1,P2, name, texts and own script. Scripts run until endscript.
 
 [pack]
+format=5
 banner1=VAULTS
 banner2=OF ZOR
 subtitle=A MAZE ADVENTURE FOR THE TRS-80 MODEL I
@@ -15,61 +15,479 @@ line3=OR TYPE COMMANDS: TAKE, OPEN, ATTACK, LOOK, HELP
 victory=YOU CLIMB INTO THE SUNLIGHT WITH THE AMULETS OF ZOR!
 starthp=12
 maxhp=15
-heal=6
-hit=70
-guardhit=37
-goldmin=5
-goldmax=20
-key=A BRASS KEY
-key1=AN IRON KEY
-key2=A SILVER KEY
-key3=A GOLD KEY
-sword=A SHORT SWORD
-potion=A RED POTION
-gold=SOME GOLD
-amulet=THE AMULET OF ZOR
-hermit=AN OLD HERMIT
-merchant=A MERCHANT
-ghost=A GHOST
+status=gold,$:
+script=
+# words the old engine knew
+synonym UNLOCK = OPEN
+synonym O = OPEN
+synonym A = ATTACK
+synonym KILL = ATTACK
+synonym FIGHT = ATTACK
+synonym HIT = ATTACK
+synonym D = DRINK
+synonym U = USE
+endscript
+
+[object]
+id=ladder
+name=A LADDER
+look=ladder
+nouns=LADDER
+desc=THE LADDER UP TO DAYLIGHT.
+script=
+# the way out: climb it with the amulet
+on arrive if has amulet then take amulet; score 100; say "YOU ESCAPE WITH THE AMULET!"; next; stop
+on arrive then say "THE LADDER LEADS UP TO DAYLIGHT - BUT NOT WITHOUT THE AMULET!"
+endscript
+
+[object]
+id=amulet
+name=THE AMULET OF ZOR
+look=amulet
+flags=carry
+nouns=AMULET
+script=
+on TAKE if here this then get this; say "YOU TAKE THE AMULET OF ZOR."; say "NOW BACK TO THE LADDER!"
+endscript
+
+[object]
+id=door0
+name=A DOOR
+look=door
+flags=solid
+nouns=DOOR
+desc=A STOUT IRON-BOUND DOOR. IT TAKES A BRASS KEY.
+script=
+on OPEN if ahead this and has key0 then take key0; remove this; say "THE KEY TURNS. THE DOOR GROANS OPEN."
+on USE if ahead this and has key0 then take key0; remove this; say "THE KEY TURNS. THE DOOR GROANS OPEN."
+on OPEN if ahead this then say "LOCKED. YOU NEED A BRASS KEY."
+on bump then say "THE DOOR IS LOCKED."
+endscript
+
+[object]
+id=key0
+name=A BRASS KEY
+look=key
+flags=carry
+nouns=KEY
+
+[object]
+id=gold
+name=SOME GOLD
+look=gold
+nouns=GOLD,COINS
+value=10
+script=
+# value = how many gold pieces (counted on the status line, and scored)
+on TAKE if here this then add gold value; score value; say "YOU GATHER THE GOLD."; remove this
+endscript
+
+[object]
+id=sword
+name=A SHORT SWORD
+look=sword
+flags=carry,keep
+nouns=SWORD
+
+[object]
+id=potion
+name=A RED POTION
+look=potion
+flags=carry,keep
+nouns=POTION
+value=6
+script=
+# value = how many HP it heals
+on DRINK if carried this then say "YOU FEEL STRONGER."; heal value; remove this
+on USE if carried this then say "YOU FEEL STRONGER."; heal value; remove this
+endscript
+
+[object]
+id=guardian
+name=THE GUARDIAN
+look=guardian
+flags=solid
+nouns=GUARDIAN,MONSTER
+value=3
+desc=THE HORNED GUARDIAN GLARES AT YOU AND SNORTS.
+script=
+# value = its hit points
+on bump then say "THE GUARDIAN BARS THE WAY!"
+on ATTACK if ahead this and has sword and chance 70 then value - 1; say "YOUR SWORD BITES DEEP!"
+on ATTACK if ahead this and has sword then say "THE GUARDIAN DODGES."
+on ATTACK if ahead this then say "YOUR FISTS DO NOTHING! YOU NEED A WEAPON."
+every turn if value < 1 then remove this; say "THE GUARDIAN CRASHES DOWN, DEAD!"
+every turn if near this and chance 37 then say "THE GUARDIAN GORES YOU!"; hurt 3 random
+endscript
+
+[object]
+id=hermit
+name=AN OLD HERMIT
+look=hermit
+flags=solid
+nouns=HERMIT
+script=
+on TALK then speak this 2
+endscript
+
+[object]
+id=lamp
+name=A DUSTY LANTERN
+look=thing
+flags=carry
+nouns=LANTERN,LAMP
+desc=AN OLD BRASS LANTERN. IT IS NOT LIT, BUT THERE IS OIL IN IT.
+
+[object]
+id=litlamp
+name=A LIT LANTERN
+look=thing
+flags=carry
+nouns=LANTERN,LAMP
+desc=THE LANTERN BURNS WITH A STEADY YELLOW FLAME.
+
+[object]
+id=ruby
+name=A GLITTERING RUBY
+look=thing
+flags=carry
+nouns=RUBY,GEM
+desc=A RUBY AS BIG AS A PIGEON EGG.
+
+[object]
+id=merchant
+name=A MERCHANT
+look=merchant
+flags=solid
+nouns=MERCHANT,TRADER
+script=
+on TALK then speak this 2
+endscript
+
+[object]
+id=sign
+name=A SIGN
+look=sign
+nouns=SIGN
+script=
+# its description is what the sign says
+on arrive then say "A SIGN READS:"; say this 1
+endscript
+
+[object]
+id=trap
+name=A TRAP
+look=none
+nouns=TRAP
+value=3
+script=
+# hidden until it springs; value = damage, text 2 = message
+on arrive then say this 2; hurt value; become trapv
+endscript
+
+[object]
+id=trapv
+name=A TRAP
+look=trap
+nouns=TRAP
+value=3
+desc=THE JAWS OF A TRAP.
+script=
+# value = damage, text 2 = message
+on arrive then say this 2; hurt value
+endscript
+
+[object]
+id=fountain
+name=A FOUNTAIN
+look=fountain
+nouns=FOUNTAIN,WATER
+desc=A FOUNTAIN BUBBLES HERE.
+script=
+# value = drinks left (0 = never runs dry), P1 = HP healed (0 = fully), text 2 = message
+on arrive if value >= 2 then say this 2; heal p1; value - 1; stop
+on arrive if value >= 1 then say this 2; heal p1; remove this; say "THE FOUNTAIN RUNS DRY."; stop
+on arrive then say this 2; heal p1
+endscript
+
+[object]
+id=ghost
+name=A GHOST
+look=ghost
+flags=solid
+nouns=GHOST,SPIRIT
+script=
+on TALK then speak this 2
+endscript
+
+[object]
+id=plate
+name=A STONE PLATE
+look=plate
+nouns=PLATE
+desc=A STONE PLATE IN THE FLOOR.
+script=
+# P1,P2 = the cell it opens, text 2 = message
+on arrive if value < 1 then value = 1; cell target open; say this 2
+endscript
+
+[object]
+id=guardian_3_35
+name=THE GUARDIAN
+look=guardian
+flags=solid
+nouns=GUARDIAN,MONSTER
+value=3
+desc=THE HORNED GUARDIAN GLARES AT YOU AND SNORTS.
+script=
+# value = its hit points
+on bump then say "THE GUARDIAN BARS THE WAY!"
+on ATTACK if ahead this and has sword and chance 70 then value - 1; say "YOUR SWORD BITES DEEP!"
+on ATTACK if ahead this and has sword then say "THE GUARDIAN DODGES."
+on ATTACK if ahead this then say "YOUR FISTS DO NOTHING! YOU NEED A WEAPON."
+every turn if value < 1 then remove this; say "THE GUARDIAN CRASHES DOWN, DEAD!"
+every turn if near this and chance 35 then say "THE GUARDIAN GORES YOU!"; hurt 3 random
+endscript
+
+[object]
+id=key1
+name=AN IRON KEY
+look=key
+flags=carry
+nouns=KEY
+
+[object]
+id=secret
+name=A WALL
+look=wall
+nouns=WALL
+desc=A WALL OF COLD, DAMP STONE.
+script=
+# looks like a wall, but isn't; text 2 = message
+on arrive then say this 2; remove this
+endscript
+
+[object]
+id=door1
+name=A DOOR
+look=door
+flags=solid
+nouns=DOOR
+desc=A STOUT IRON-BOUND DOOR. IT TAKES AN IRON KEY.
+script=
+on OPEN if ahead this and has key1 then take key1; remove this; say "THE KEY TURNS. THE DOOR GROANS OPEN."
+on USE if ahead this and has key1 then take key1; remove this; say "THE KEY TURNS. THE DOOR GROANS OPEN."
+on OPEN if ahead this then say "LOCKED. YOU NEED AN IRON KEY."
+on bump then say "THE DOOR IS LOCKED."
+endscript
+
+[object]
+id=teleporter
+name=A GLOWING CIRCLE
+look=teleporter
+nouns=CIRCLE
+desc=A CIRCLE OF LIGHT ON THE FLOOR.
+script=
+# P1,P2 = where it sends the player, text 2 = message
+on arrive then say this 2; goto target
+endscript
+
+[object]
+id=trapvo
+name=A TRAP
+look=trap
+nouns=TRAP
+value=3
+desc=THE JAWS OF A TRAP.
+script=
+# springs once; value = damage, text 2 = message
+on arrive then say this 2; hurt value; remove this
+endscript
+
+[object]
+id=door3
+name=A DOOR
+look=door
+flags=solid
+nouns=DOOR
+desc=A STOUT IRON-BOUND DOOR. IT TAKES A GOLD KEY.
+script=
+on OPEN if ahead this and has key3 then take key3; remove this; say "THE KEY TURNS. THE DOOR GROANS OPEN."
+on USE if ahead this and has key3 then take key3; remove this; say "THE KEY TURNS. THE DOOR GROANS OPEN."
+on OPEN if ahead this then say "LOCKED. YOU NEED A GOLD KEY."
+on bump then say "THE DOOR IS LOCKED."
+endscript
+
+[object]
+id=key3
+name=A GOLD KEY
+look=key
+flags=carry
+nouns=KEY
+
+[object]
+id=guardian_2_30
+name=THE GUARDIAN
+look=guardian
+flags=solid
+nouns=GUARDIAN,MONSTER
+value=3
+desc=THE HORNED GUARDIAN GLARES AT YOU AND SNORTS.
+script=
+# value = its hit points
+on bump then say "THE GUARDIAN BARS THE WAY!"
+on ATTACK if ahead this and has sword and chance 70 then value - 1; say "YOUR SWORD BITES DEEP!"
+on ATTACK if ahead this and has sword then say "THE GUARDIAN DODGES."
+on ATTACK if ahead this then say "YOUR FISTS DO NOTHING! YOU NEED A WEAPON."
+every turn if value < 1 then remove this; say "THE GUARDIAN CRASHES DOWN, DEAD!"
+every turn if near this and chance 30 then say "THE GUARDIAN GORES YOU!"; hurt 2 random
+endscript
+
+[object]
+id=torch
+name=AN UNLIT TORCH
+look=thing
+flags=carry
+nouns=TORCH
+desc=A STICK WRAPPED IN OILY RAGS.
+
+[object]
+id=littorch
+name=A BURNING TORCH
+look=thing
+flags=carry
+nouns=TORCH
+desc=IT CRACKLES AND SMOKES.
+
+[object]
+id=brazier
+name=A BURNING BRAZIER
+look=thing
+nouns=BRAZIER,FIRE
+desc=FLAMES LEAP FROM A BRONZE BOWL. WHO KEEPS IT LIT?
+
+[object]
+id=shovel
+name=A WOODEN SHOVEL
+look=thing
+flags=carry
+nouns=SHOVEL,SPADE
+desc=LEFT BY SOME LESS LUCKY ROBBER.
+
+[object]
+id=scarab
+name=A GOLDEN SCARAB
+look=thing
+flags=carry
+nouns=SCARAB,BEETLE
+desc=A BEETLE OF SOLID GOLD, FLAT ON ONE SIDE.
+
+[object]
+id=ankh
+name=A SILVER ANKH
+look=thing
+flags=carry
+nouns=ANKH
+desc=THE SIGN OF LIFE. IT FEELS WARM.
+
+[object]
+id=idol
+name=A GOLDEN IDOL
+look=thing
+flags=carry
+nouns=IDOL
+desc=A JACKAL-HEADED GOD WITH RUBY EYES.
+
+[object]
+id=collar
+name=A JEWELLED COLLAR
+look=thing
+flags=carry
+nouns=COLLAR,JEWELS
+desc=LAPIS AND GOLD, FIT FOR A QUEEN.
+
+[object]
+id=coffin
+name=A STONE SARCOPHAGUS
+look=thing
+nouns=SARCOPHAGUS,COFFIN,LID
+desc=CARVED WITH THE FACE OF NEB-SENU. THE LID IS HEAVY.
 
 [level]
 name=THE UPPER VAULTS
-guardhp=3
-facing=E
 intro=YOU CLIMB DOWN INTO THE DARK VAULTS OF ZOR. SOMEWHERE BELOW LIES THE AMULET. FIND IT AND RETURN HERE TO THE LADDER.|TYPE HELP FOR COMMANDS.
+start=1,1,E
 map=
 ################################
-#H..#D...A#.......#...#....$..##
-###.#.#####.#.#.#.#.#$#.#.#.####
-#S..#.#.....#.....#.#.....#...##
+#...#.....#.......#...#.......##
+###.#.#####.#.#.#.#.#.#.#.#.####
+#...#.#.....#.....#.#.....#...##
 #.#.#.#.#####.#.#.#.#.###.###.##
 #.#.#.#.........#.............##
-#.#.#.#.#.#.#$#.#.#.###.###.#.##
-#.....#..$#..........$..#.#$..##
+#.#.#.#.#.#.#.#.#.#.###.###.#.##
+#.....#...#.............#.#...##
 #.#.#.#.#####.#.#.#.#.#.#.#.#.##
-#...#...#.P.......#.#.#.......##
+#...#...#.........#.#.#.......##
 #.#.#####.#.#.###.#.#.#.#.#.#.##
-#.....#.........#....$#...#.#.##
+#.....#.........#.....#...#.#.##
 #.#.#.#.###.###.#.#.###.#.###.##
 #.......#.......#.#.#.......#.##
 #.#######.#####.#.#.#####.#.#.##
-#.........G..K#...............##
+#.............#...............##
 #.#.#.#.#######.#.#.#.#.#.#.#.##
-#.#...#.........#..$....#.P.#.##
+#.#...#.........#.......#...#.##
 #.#########.###.#.#.###.#.#.#.##
-#.................#$..#...#...##
+#.................#...#...#...##
 #####.#.#.#####.#.#.###.###.#.##
-#&........#......$..........#.##
+#.........#.................#.##
 ################################
 ################################
-obj=1,21,0,1,0,6,WELCOME, YOUNG ONE. THE GUARDIAN FEARS ONLY STEEL: FIND THE SWORD FIRST, THEN THE KEY. TAKE THIS POTION FOR THE ROAD.
-obj2=1,21,GO NOW. THE AMULET WAITS BEYOND THE LOCKED DOOR.
+obj=1,1,ladder
+obj=5,1,door0
+obj=9,1,amulet
+obj=27,1,gold
+ovalue=7
+obj=21,2,gold
+ovalue=8
+obj=1,3,sword
+obj=13,6,gold
+ovalue=17
+obj=9,7,gold
+ovalue=5
+obj=21,7,gold
+ovalue=16
+obj=27,7,gold
+ovalue=12
+obj=10,9,potion
+obj=21,11,gold
+ovalue=20
+obj=10,15,guardian
+ovalue=3
+obj=13,15,key0
+obj=19,17,gold
+ovalue=7
+obj=26,17,potion
+obj=19,19,gold
+ovalue=16
+obj=1,21,hermit
+otext2=WELCOME, YOUNG ONE. THE GUARDIAN FEARS ONLY STEEL: FIND THE SWORD FIRST, THEN THE KEY. TAKE THIS POTION FOR THE ROAD.
+otext3=GO NOW. THE AMULET WAITS BEYOND THE LOCKED DOOR.
+oscript=
+# gives A RED POTION once
+on TALK if value < 1 then speak this 2; value = 1; give potion; say "YOU RECEIVE A RED POTION."
+on TALK then speak this 3
+endscript
+obj=17,21,gold
+ovalue=5
+obj=11,21,lamp
+oname=lamp
+obj=nowhere,litlamp
+oname=litlamp
+obj=nowhere,ruby
+oname=ruby
 script=
 # A side quest in the style of the old two-word adventures.
 # Light the lantern, find the dark corner, move the loose stone.
-item lamp "A DUSTY LANTERN" at 11,21 nouns LANTERN,LAMP desc "AN OLD BRASS LANTERN. IT IS NOT LIT, BUT THERE IS OIL IN IT."
-item litlamp "A LIT LANTERN" nowhere nouns LANTERN,LAMP desc "THE LANTERN BURNS WITH A STEADY YELLOW FLAME."
-item ruby "A GLITTERING RUBY" nowhere nouns RUBY,GEM desc "A RUBY AS BIG AS A PIGEON EGG."
 synonym IGNITE = LIGHT
 synonym PUSH = MOVE
 synonym PULL = MOVE
@@ -98,136 +516,254 @@ endscript
 
 [level]
 name=THE DEEP VAULTS
-guardhp=4
-facing=E
 intro=THE LADDER LEADS DEEPER STILL. THE AIR IS COLD AND A SECOND AMULET GLINTS SOMEWHERE IN THE DARK. A FIERCER GUARDIAN WAITS.
+start=1,1,E
 map=
 ################################
-#H........$...#.........$.....##
+#.............#...............##
 ###.#.#.#.#.#.#.###.#.#.#.#.#.##
-#S..#...#...#.....#....$..#...##
-#$#.#.###.#.#####.#.#.#.#.#.#.##
+#...#...#...#.....#.......#...##
+#.#.#.###.#.#####.#.#.#.#.#.#.##
 #.#.................#...#.#...##
-#.#.###.#.#.#.#.#.#.#P#.#.#.#.##
-#.$.....#.#...#.......#.#.....##
+#.#.###.#.#.#.#.#.#.#.#.#.#.#.##
+#.......#.#...#.......#.#.....##
 #.#.#.#.#.###.#.###.#.#.#.#.#.##
-#...#...#.#.....#A#.#...#.....##
+#...#...#.#.....#.#.#...#.....##
 #.###.#.#.#.###.#.#.#.#.#.#.#.##
-#.......#.......#.#.........#$##
+#.......#.......#.#.........#.##
 #.#.#.#.#.#.###.#.#.#.#.#.#.#.##
-#.....#..........D#.....#...#.##
-#.#####.#.#$#.#####.###.#.#.#.##
-#.....................#.#..$..##
+#.....#...........#.....#...#.##
+#.#####.#.#.#.#####.###.#.#.#.##
+#.....................#.#.....##
 ###.#.###.#####.#.###.###.#.#.##
-#...#.............P...#...#...##
+#...#.................#...#...##
 #.#.###.###.#########.#.#####.##
-#..$....#...#...............#.##
+#.......#...#...............#.##
 #####.#.#.###.#.#.#.#.###.#.#.##
-#K..G.....#&......$...........##
+#.........#...................##
 ################################
 ################################
-obj=11,21,1,2,15,6,FINE POTIONS! A RED POTION FOR ONLY 15 GOLD PIECES.
-obj2=11,21,A PLEASURE DOING BUSINESS. MIND THAT GUARDIAN!
+obj=1,1,ladder
+obj=10,1,gold
+ovalue=15
+obj=24,1,gold
+ovalue=13
+obj=1,3,sword
+obj=23,3,gold
+ovalue=12
+obj=1,4,gold
+ovalue=8
+obj=21,6,potion
+obj=2,7,gold
+ovalue=7
+obj=17,9,amulet
+obj=29,11,gold
+ovalue=10
+obj=17,13,door0
+obj=11,14,gold
+ovalue=11
+obj=27,15,gold
+ovalue=15
+obj=18,17,potion
+obj=3,19,gold
+ovalue=18
+obj=1,21,key0
+obj=4,21,guardian
+ovalue=4
+obj=11,21,merchant
+otext2=FINE POTIONS! A RED POTION FOR ONLY 15 GOLD PIECES.
+otext3=A PLEASURE DOING BUSINESS. MIND THAT GUARDIAN!
+oscript=
+# sells A RED POTION for 15 gold
+on TALK if value < 1 and counter gold >= 15 then speak this 2; sub gold 15; say "YOU PAY 15 GOLD."; value = 1; give potion; say "YOU RECEIVE A RED POTION."
+on TALK if value < 1 then speak this 2; say "YOU NEED 15 GOLD."
+on TALK then speak this 3
+endscript
+obj=18,21,gold
+ovalue=11
 
 [level]
 name=THE HALL OF TRIALS
-guardhp=5
-facing=E
 intro=THE LAST VAULT IS FULL OF TRICKS: SIGNS, TRAPS, A FOUNTAIN, A GLOWING CIRCLE AND WALLS THAT ARE NOT WHAT THEY SEEM. THE THIRD AMULET LIES BEHIND AN IRON DOOR.
+start=1,1,E
 map=
 ################################
-#H?........^............#.....##
-###$###.#.#.#.#.#.#.#.#.#.#.#.##
-#W&....$#..$.....$#S....#.....##
+#.......................#.....##
+###.###.#.#.#.#.#.#.#.#.#.#.#.##
+#.......#.........#.....#.....##
 #####.#.###.#.#.#.#.#.#.###.####
-#...=.#.....#.............#...##
+#.....#.....#.............#...##
 #.#####.#.###.#.###.#####.#.#.##
-#....$..............G..K#...#.##
+#.......................#...#.##
 #.#.#.#.#.#.#.###.#.#####.#.#.##
-#.............%...........#.#P##
+#.........................#.#.##
 #.#.#.#.#.#.#.#.#.###.#.#.#.#.##
-#..$............#...#...#.....##
+#...............#...#...#.....##
 #.#######.#########.#.###.#.#.##
-#.....#A#.......#........$#...##
-#####.#.###.#.#.#.###.#.#.#$#.##
-#.....#..D..............#.....##
+#.....#.#.......#.........#...##
+#####.#.###.#.#.#.###.#.#.#.#.##
+#.....#.................#.....##
 #.#.#.#####.#.###.#.#.###.#.#.##
-#.......#..$#.....#.#.....#.#.##
-#.#####.#.###.#.#P#.###.###.#.##
+#.......#...#.....#.#.....#.#.##
+#.#####.#.###.#.#.#.###.###.#.##
 #.............#...#...........##
 #.###.#.###.#.#.#####.#.#####.##
-#...........#@#....^......$...##
+#...........#.#...............##
 ################################
 ################################
-obj=2,1,0,0,0,0,BEWARE: NOT EVERY STONE IS SOLID, NOT EVERY FLOOR IS SAFE.
-obj=23,7,1,0,0,0,
-obj=9,15,1,0,0,0,
-obj=20,7,4,3,35,0,A HUGE GUARDIAN IN BLACK IRON ARMOUR BLOCKS THE PASSAGE.
-obj=11,1,2,0,0,0,A HIDDEN SPIKE STABS YOUR FOOT!
-obj=19,21,4,1,1,0,THE TRAP SNAPS SHUT, THEN CRUMBLES TO RUST.
-obj=1,3,0,2,0,0,COOL WATER RESTORES YOU.
-obj=13,21,29,21,0,0,
-obj=4,5,18,2,0,0,
-obj=14,9,0,0,0,0,YOU STEP THROUGH THE WALL - IT WAS ONLY AN ILLUSION!
-obj=3,2,50,0,0,0,
-obj=29,9,12,0,0,0,
-obj=2,3,2,4,0,0,THE WATERS BEHIND ME WERE MINE ONCE... BUT YOU MAY DRINK. PASS, LIVING ONE, AND BEWARE THE HIDDEN SPIKES.
+obj=1,1,ladder
+obj=2,1,sign
+otext=BEWARE: NOT EVERY STONE IS SOLID, NOT EVERY FLOOR IS SAFE.
+obj=11,1,trap
+ovalue=2
+otext2=A HIDDEN SPIKE STABS YOUR FOOT!
+obj=3,2,gold
+ovalue=50
+obj=1,3,fountain
+ovalue=2
+otext2=COOL WATER RESTORES YOU.
+obj=2,3,ghost
+otext2=THE WATERS BEHIND ME WERE MINE ONCE... BUT YOU MAY DRINK. PASS, LIVING ONE, AND BEWARE THE HIDDEN SPIKES.
+otext3=THE WATERS BEHIND ME WERE MINE ONCE... BUT YOU MAY DRINK. PASS, LIVING ONE, AND BEWARE THE HIDDEN SPIKES.
+oscript=
+# steps aside after talking
+on TALK then speak this 2; remove this; say "AND WITH THAT, THEY ARE GONE."
+endscript
+obj=7,3,gold
+ovalue=8
+obj=11,3,gold
+ovalue=18
+obj=17,3,gold
+ovalue=7
+obj=19,3,sword
+obj=4,5,plate
+op=18,2
+otext2=CLICK! STONE GRINDS NEARBY.
+obj=5,7,gold
+ovalue=11
+obj=20,7,guardian_3_35
+ovalue=4
+otext=A HUGE GUARDIAN IN BLACK IRON ARMOUR BLOCKS THE PASSAGE.
+obj=23,7,key1
+obj=14,9,secret
+otext2=YOU STEP THROUGH THE WALL - IT WAS ONLY AN ILLUSION!
+obj=29,9,potion
+ovalue=12
+obj=3,11,gold
+ovalue=14
+obj=7,13,amulet
+obj=25,13,gold
+ovalue=8
+obj=27,14,gold
+ovalue=18
+obj=9,15,door1
+obj=11,17,gold
+ovalue=7
+obj=17,18,potion
+obj=13,21,teleporter
+op=29,21
+otext2=THE FLOOR GLOWS AND THE VAULT SPINS AROUND YOU...
+obj=19,21,trapvo
+ovalue=4
+otext2=THE TRAP SNAPS SHUT, THEN CRUMBLES TO RUST.
+obj=26,21,gold
+ovalue=20
 
 [level]
 name=THE SAND PYRAMID
-guardhp=3
-facing=E
 intro=BEYOND THE VAULTS A PYRAMID LIES HALF-BURIED IN THE SAND. THE TOMB OF PHARAOH NEB-SENU HOLDS THE LAST AMULET OF ZOR. THE DEAD DO NOT REST HERE.
+start=15,21,E
 map=
 ################################
 ################################
 ##############....##############
 ##############....##############
-###############D################
 ###############.################
 ###############.################
 ###############.################
 ###############.################
-###########@###.###&############
-###########..^......############
+###############.################
+###########.###.###.############
+###########.........############
 ###############.################
 ###############.#...############
-######...######G#...##$..#######
-######...######.#%####...#######
-######....$.?.....^......#######
+######...######.#...##...#######
+######...######.#.####...#######
+######...................#######
 ################################
-##....#..P#####.########.....###
 ##....#...#####.########.....###
-##....##.##..?.......###.....###
+##....#...#####.########.....###
+##....##.##..........###.....###
 ###.####.##..........####.######
-##W..$.........H...........$..&#
+##.............................#
 ################################
 ################################
-obj=13,19,0,0,0,0,THE HIEROGLYPHS WARN: WHO ENTERS THE HOUSE OF NEB-SENU SHALL MEET DEATH. YET THE WISE KNOW THAT FIRE UNDOES THE DEAD, AND THAT NOT EVERY WALL IS STONE.
-obj=12,15,0,0,0,0,HERE THE HIEROGLYPHS TELL OF AMENTEP, HIGH PRIEST OF NEB-SENU, WHO SEALED THE TOMB AND GUARDS IT STILL. THE PAINTED ROOF STONE TO THE EAST HIDES A TREASURE.
-obj=18,15,2,0,0,0,STONE SPIKES SPRING FROM THE FLOOR!
-obj=13,10,3,1,1,0,YOU STUMBLE INTO A PIT OF OLD BONES AND CLAMBER OUT.
-obj=15,13,0,2,30,0,A MUMMY IN ROTTING BANDAGES SHAMBLES TOWARDS YOU. NO BLADE COULD HARM IT.
-obj=17,14,0,0,0,0,THE PAINTED STONE WAS ONLY CLOTH! YOU PUSH THROUGH.
-obj=2,21,0,3,0,0,YOU DRINK FROM THE SACRED BASIN. THE WATER IS COOL AND SWEET.
-obj=11,9,12,20,0,0,THE SUN DISC FLARES GOLD AND CARRIES YOU DOWN TO THE ENTRANCE HALL!
-obj=15,4,3,0,0,0,
-obj=30,21,1,2,10,6,WATER AND HEALING DRAUGHTS! A POTION FOR ONLY 10 GOLD PIECES.
-obj2=30,21,MAY THE SANDS BE KIND TO YOU, FRIEND.
-obj=19,9,2,0,0,0,I AM THE PRIEST WHO SEALED THIS TOMB. SPEAK MY NAME, THIEF, AND I MAY YET OPEN THE WAY.
+obj=15,4,door3
+obj=11,9,teleporter
+op=12,20
+otext2=THE SUN DISC FLARES GOLD AND CARRIES YOU DOWN TO THE ENTRANCE HALL!
+obj=19,9,ghost
+otext2=I AM THE PRIEST WHO SEALED THIS TOMB. SPEAK MY NAME, THIEF, AND I MAY YET OPEN THE WAY.
+otext3=I AM THE PRIEST WHO SEALED THIS TOMB. SPEAK MY NAME, THIEF, AND I MAY YET OPEN THE WAY.
+obj=13,10,trapvo
+ovalue=3
+otext2=YOU STUMBLE INTO A PIT OF OLD BONES AND CLAMBER OUT.
+obj=15,13,guardian_2_30
+ovalue=3
+otext=A MUMMY IN ROTTING BANDAGES SHAMBLES TOWARDS YOU. NO BLADE COULD HARM IT.
+obj=22,13,gold
+ovalue=16
+obj=17,14,secret
+otext2=THE PAINTED STONE WAS ONLY CLOTH! YOU PUSH THROUGH.
+obj=10,15,gold
+ovalue=6
+obj=12,15,sign
+otext=HERE THE HIEROGLYPHS TELL OF AMENTEP, HIGH PRIEST OF NEB-SENU, WHO SEALED THE TOMB AND GUARDS IT STILL. THE PAINTED ROOF STONE TO THE EAST HIDES A TREASURE.
+obj=18,15,trap
+ovalue=2
+otext2=STONE SPIKES SPRING FROM THE FLOOR!
+obj=9,17,potion
+obj=13,19,sign
+otext=THE HIEROGLYPHS WARN: WHO ENTERS THE HOUSE OF NEB-SENU SHALL MEET DEATH. YET THE WISE KNOW THAT FIRE UNDOES THE DEAD, AND THAT NOT EVERY WALL IS STONE.
+obj=2,21,fountain
+ovalue=3
+otext2=YOU DRINK FROM THE SACRED BASIN. THE WATER IS COOL AND SWEET.
+obj=5,21,gold
+ovalue=18
+obj=15,21,ladder
+obj=27,21,gold
+ovalue=15
+obj=30,21,merchant
+otext2=WATER AND HEALING DRAUGHTS! A POTION FOR ONLY 10 GOLD PIECES.
+otext3=MAY THE SANDS BE KIND TO YOU, FRIEND.
+oscript=
+# sells A RED POTION for 10 gold
+on TALK if value < 1 and counter gold >= 10 then speak this 2; sub gold 10; say "YOU PAY 10 GOLD."; value = 1; give potion; say "YOU RECEIVE A RED POTION."
+on TALK if value < 1 then speak this 2; say "YOU NEED 10 GOLD."
+on TALK then speak this 3
+endscript
+obj=11,19,torch
+oname=torch
+obj=nowhere,littorch
+oname=littorch
+obj=8,17,brazier
+oname=brazier
+obj=3,18,shovel
+oname=shovel
+obj=nowhere,scarab
+oname=scarab
+obj=6,13,ankh
+oname=ankh
+obj=24,13,idol
+oname=idol
+obj=19,12,collar
+oname=collar
+obj=16,2,coffin
+oname=coffin
 script=
 # THE SAND PYRAMID - a tomb adventure in the old two-word style.
 # Torch from the brazier, scarab from the sand, the mummy burnt,
 # the priest's name spoken, the curse warded off with the ankh.
-item torch "AN UNLIT TORCH" at 11,19 nouns TORCH desc "A STICK WRAPPED IN OILY RAGS."
-item littorch "A BURNING TORCH" nowhere nouns TORCH desc "IT CRACKLES AND SMOKES."
-item brazier "A BURNING BRAZIER" at 8,17 fixed nouns BRAZIER,FIRE desc "FLAMES LEAP FROM A BRONZE BOWL. WHO KEEPS IT LIT?"
-item shovel "A WOODEN SHOVEL" at 3,18 nouns SHOVEL,SPADE desc "LEFT BY SOME LESS LUCKY ROBBER."
-item scarab "A GOLDEN SCARAB" nowhere nouns SCARAB,BEETLE desc "A BEETLE OF SOLID GOLD, FLAT ON ONE SIDE."
-item ankh "A SILVER ANKH" at 6,13 nouns ANKH desc "THE SIGN OF LIFE. IT FEELS WARM."
-item idol "A GOLDEN IDOL" at 24,13 nouns IDOL desc "A JACKAL-HEADED GOD WITH RUBY EYES."
-item collar "A JEWELLED COLLAR" at 19,12 nouns COLLAR,JEWELS desc "LAPIS AND GOLD, FIT FOR A QUEEN."
-item coffin "A STONE SARCOPHAGUS" at 16,2 fixed nouns SARCOPHAGUS,COFFIN,LID desc "CARVED WITH THE FACE OF NEB-SENU. THE LID IS HEAVY."
 
 # fire
 on LIGHT TORCH if carried torch and present brazier then swap torch littorch; counter flame = 45;
@@ -250,7 +786,7 @@ synonym EXCAVATE = DIG
 
 # the sealed wall
 on arrive if at 15,17 and not flag sealopen then say "A WALL SEALS THE WAY NORTH. IN IT IS A HOLLOW SHAPED LIKE A BEETLE."
-on PLACE SCARAB if at 15,17 and carried scarab then destroy scarab; cell 15,16 floor; set sealopen;
+on PLACE SCARAB if at 15,17 and carried scarab then destroy scarab; cell 15,16 open; set sealopen;
   score 20; say "THE SCARAB FITS EXACTLY. WITH A DEEP GRINDING THE WALL SINKS INTO THE FLOOR!"
 on PLACE SCARAB if carried scarab then say "THERE IS NOWHERE TO PUT IT HERE."
 on PLACE any then say "YOU HAVE NOTHING TO PLACE."
@@ -259,9 +795,9 @@ synonym PUT = PLACE
 on EXAMINE HOLLOW if at 15,17 and not flag sealopen then say "IT IS EXACTLY THE SHAPE OF A SCARAB BEETLE."
 
 # the mummy
-on BURN MUMMY if ahead 15,13 and carried littorch then cell 15,13 floor; score 30;
+on BURN MUMMY if ahead 15,13 and carried littorch then cell 15,13 open; score 30;
   say "YOU THRUST THE TORCH INTO THE BANDAGES. THE MUMMY BURSTS INTO FLAME AND CRUMBLES TO ASH!"
-on ATTACK MUMMY if ahead 15,13 and carried littorch then cell 15,13 floor; score 30;
+on ATTACK MUMMY if ahead 15,13 and carried littorch then cell 15,13 open; score 30;
   say "YOU THRUST THE TORCH INTO THE BANDAGES. THE MUMMY BURSTS INTO FLAME AND CRUMBLES TO ASH!"
 on BURN MUMMY if ahead 15,13 then say "YOU NEED A FLAME TO DO THAT."
 on BURN any then say "THERE IS NOTHING HERE TO BURN."
@@ -278,10 +814,10 @@ synonym CALL = SAY
 
 # the burial chamber and the curse
 on arrive if at 15,3 and not flag cursed then say "THE BURIAL CHAMBER OF NEB-SENU! GOLD GLEAMS IN THE DUST."
-on OPEN SARCOPHAGUS if here coffin and not flag cursed and carried ankh then cell 14,2 amulet; set cursed;
+on OPEN SARCOPHAGUS if here coffin and not flag cursed and carried ankh then create amulet at 14,2; set cursed;
   say "THE LID GRINDS ASIDE. AN AMULET ROLLS FROM THE PHARAOH'S HAND ONTO THE FLOOR!";
   say "A COLD WIND MOANS... BUT YOUR ANKH GLOWS AND THE CURSE PASSES YOU BY."
-on OPEN SARCOPHAGUS if here coffin and not flag cursed then cell 14,2 amulet; set cursed;
+on OPEN SARCOPHAGUS if here coffin and not flag cursed then create amulet at 14,2; set cursed;
   say "THE LID GRINDS ASIDE. AN AMULET ROLLS FROM THE PHARAOH'S HAND ONTO THE FLOOR!";
   say "A COLD WIND MOANS. YOU HAVE BEEN CURSED!"
 on OPEN SARCOPHAGUS if here coffin then say "THE PHARAOH SLEEPS. LET HIM BE."

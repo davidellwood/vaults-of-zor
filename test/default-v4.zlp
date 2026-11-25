@@ -1,0 +1,296 @@
+; Vaults of Zor level pack - edit with ZorEdit.exe or any text editor
+; map: # wall  . floor  D door  H ladder (start)  G guardian
+;      K key  S sword  P potion  $ gold  A amulet
+;      ? sign  ^ trap  @ teleporter  W fountain  = pressure plate  % secret wall  & character
+; obj=x,y,a,b,c,d,text  sets the parameters of the cell at x,y (see README)
+; obj2=x,y,text         a character's speech once its deed is done
+
+[pack]
+banner1=VAULTS
+banner2=OF ZOR
+subtitle=A MAZE ADVENTURE FOR THE TRS-80 MODEL I
+line1=RECOVER THE AMULETS OF ZOR AND CLIMB BACK OUT
+line2=ARROWS: UP=FORWARD  DOWN=BACK  LEFT/RIGHT=TURN
+line3=OR TYPE COMMANDS: TAKE, OPEN, ATTACK, LOOK, HELP
+victory=YOU CLIMB INTO THE SUNLIGHT WITH THE AMULETS OF ZOR!
+starthp=12
+maxhp=15
+heal=6
+hit=70
+guardhit=37
+goldmin=5
+goldmax=20
+key=A BRASS KEY
+key1=AN IRON KEY
+key2=A SILVER KEY
+key3=A GOLD KEY
+sword=A SHORT SWORD
+potion=A RED POTION
+gold=SOME GOLD
+amulet=THE AMULET OF ZOR
+hermit=AN OLD HERMIT
+merchant=A MERCHANT
+ghost=A GHOST
+
+[level]
+name=THE UPPER VAULTS
+guardhp=3
+facing=E
+intro=YOU CLIMB DOWN INTO THE DARK VAULTS OF ZOR. SOMEWHERE BELOW LIES THE AMULET. FIND IT AND RETURN HERE TO THE LADDER.|TYPE HELP FOR COMMANDS.
+map=
+################################
+#H..#D...A#.......#...#....$..##
+###.#.#####.#.#.#.#.#$#.#.#.####
+#S..#.#.....#.....#.#.....#...##
+#.#.#.#.#####.#.#.#.#.###.###.##
+#.#.#.#.........#.............##
+#.#.#.#.#.#.#$#.#.#.###.###.#.##
+#.....#..$#..........$..#.#$..##
+#.#.#.#.#####.#.#.#.#.#.#.#.#.##
+#...#...#.P.......#.#.#.......##
+#.#.#####.#.#.###.#.#.#.#.#.#.##
+#.....#.........#....$#...#.#.##
+#.#.#.#.###.###.#.#.###.#.###.##
+#.......#.......#.#.#.......#.##
+#.#######.#####.#.#.#####.#.#.##
+#.........G..K#...............##
+#.#.#.#.#######.#.#.#.#.#.#.#.##
+#.#...#.........#..$....#.P.#.##
+#.#########.###.#.#.###.#.#.#.##
+#.................#$..#...#...##
+#####.#.#.#####.#.#.###.###.#.##
+#&........#......$..........#.##
+################################
+################################
+obj=1,21,0,1,0,6,WELCOME, YOUNG ONE. THE GUARDIAN FEARS ONLY STEEL: FIND THE SWORD FIRST, THEN THE KEY. TAKE THIS POTION FOR THE ROAD.
+obj2=1,21,GO NOW. THE AMULET WAITS BEYOND THE LOCKED DOOR.
+script=
+# A side quest in the style of the old two-word adventures.
+# Light the lantern, find the dark corner, move the loose stone.
+item lamp "A DUSTY LANTERN" at 11,21 nouns LANTERN,LAMP desc "AN OLD BRASS LANTERN. IT IS NOT LIT, BUT THERE IS OIL IN IT."
+item litlamp "A LIT LANTERN" nowhere nouns LANTERN,LAMP desc "THE LANTERN BURNS WITH A STEADY YELLOW FLAME."
+item ruby "A GLITTERING RUBY" nowhere nouns RUBY,GEM desc "A RUBY AS BIG AS A PIGEON EGG."
+synonym IGNITE = LIGHT
+synonym PUSH = MOVE
+synonym PULL = MOVE
+on LIGHT LAMP if carried lamp and flag noil then say "THERE IS NO OIL LEFT."
+on LIGHT LAMP if carried lamp then swap lamp litlamp; counter oil = 40;
+  say "THE WICK CATCHES. THE LANTERN GLOWS."
+on LIGHT LAMP if present litlamp then say "IT IS ALREADY LIT."
+on LIGHT LAMP if here lamp then say "PICK IT UP FIRST."
+on LIGHT any then say "YOU HAVE NOTHING TO LIGHT."
+on EXTINGUISH LAMP if carried litlamp then swap litlamp lamp; say "YOU PUT THE LANTERN OUT."
+synonym DOUSE = EXTINGUISH
+every turn if carried litlamp then sub oil 1
+every turn if carried litlamp and counter oil < 1 then swap litlamp lamp;
+  say "THE LANTERN SPUTTERS AND GOES OUT. THE OIL IS GONE."; set noil
+on arrive if at 29,21 and not present litlamp then say "THIS CORNER IS PITCH BLACK. YOU FEEL A COLD DRAUGHT."
+on arrive if at 29,21 and present litlamp and not flag moved then
+  say "BY LANTERN LIGHT YOU SEE A LOOSE STONE IN THE WALL."; set spotted
+on MOVE STONE if at 29,21 and flag spotted and not flag moved then put ruby at 29,21; set moved;
+  score 50; say "THE STONE SLIDES OUT. SOMETHING GLITTERS IN THE HOLE BEHIND IT!"
+on MOVE STONE if at 29,21 and not flag spotted then say "IT IS TOO DARK TO SEE ANY STONE."
+on MOVE STONE then say "WHAT STONE?"
+on EXAMINE STONE if flag spotted then say "IT IS LOOSE IN ITS SETTING."
+on RUB LAMP if present lamp then say "NOTHING HAPPENS. THIS IS NOT THAT KIND OF LANTERN."
+on RUB LAMP if present litlamp then say "OUCH! IT IS HOT."
+endscript
+
+[level]
+name=THE DEEP VAULTS
+guardhp=4
+facing=E
+intro=THE LADDER LEADS DEEPER STILL. THE AIR IS COLD AND A SECOND AMULET GLINTS SOMEWHERE IN THE DARK. A FIERCER GUARDIAN WAITS.
+map=
+################################
+#H........$...#.........$.....##
+###.#.#.#.#.#.#.###.#.#.#.#.#.##
+#S..#...#...#.....#....$..#...##
+#$#.#.###.#.#####.#.#.#.#.#.#.##
+#.#.................#...#.#...##
+#.#.###.#.#.#.#.#.#.#P#.#.#.#.##
+#.$.....#.#...#.......#.#.....##
+#.#.#.#.#.###.#.###.#.#.#.#.#.##
+#...#...#.#.....#A#.#...#.....##
+#.###.#.#.#.###.#.#.#.#.#.#.#.##
+#.......#.......#.#.........#$##
+#.#.#.#.#.#.###.#.#.#.#.#.#.#.##
+#.....#..........D#.....#...#.##
+#.#####.#.#$#.#####.###.#.#.#.##
+#.....................#.#..$..##
+###.#.###.#####.#.###.###.#.#.##
+#...#.............P...#...#...##
+#.#.###.###.#########.#.#####.##
+#..$....#...#...............#.##
+#####.#.#.###.#.#.#.#.###.#.#.##
+#K..G.....#&......$...........##
+################################
+################################
+obj=11,21,1,2,15,6,FINE POTIONS! A RED POTION FOR ONLY 15 GOLD PIECES.
+obj2=11,21,A PLEASURE DOING BUSINESS. MIND THAT GUARDIAN!
+
+[level]
+name=THE HALL OF TRIALS
+guardhp=5
+facing=E
+intro=THE LAST VAULT IS FULL OF TRICKS: SIGNS, TRAPS, A FOUNTAIN, A GLOWING CIRCLE AND WALLS THAT ARE NOT WHAT THEY SEEM. THE THIRD AMULET LIES BEHIND AN IRON DOOR.
+map=
+################################
+#H?........^............#.....##
+###$###.#.#.#.#.#.#.#.#.#.#.#.##
+#W&....$#..$.....$#S....#.....##
+#####.#.###.#.#.#.#.#.#.###.####
+#...=.#.....#.............#...##
+#.#####.#.###.#.###.#####.#.#.##
+#....$..............G..K#...#.##
+#.#.#.#.#.#.#.###.#.#####.#.#.##
+#.............%...........#.#P##
+#.#.#.#.#.#.#.#.#.###.#.#.#.#.##
+#..$............#...#...#.....##
+#.#######.#########.#.###.#.#.##
+#.....#A#.......#........$#...##
+#####.#.###.#.#.#.###.#.#.#$#.##
+#.....#..D..............#.....##
+#.#.#.#####.#.###.#.#.###.#.#.##
+#.......#..$#.....#.#.....#.#.##
+#.#####.#.###.#.#P#.###.###.#.##
+#.............#...#...........##
+#.###.#.###.#.#.#####.#.#####.##
+#...........#@#....^......$...##
+################################
+################################
+obj=2,1,0,0,0,0,BEWARE: NOT EVERY STONE IS SOLID, NOT EVERY FLOOR IS SAFE.
+obj=23,7,1,0,0,0,
+obj=9,15,1,0,0,0,
+obj=20,7,4,3,35,0,A HUGE GUARDIAN IN BLACK IRON ARMOUR BLOCKS THE PASSAGE.
+obj=11,1,2,0,0,0,A HIDDEN SPIKE STABS YOUR FOOT!
+obj=19,21,4,1,1,0,THE TRAP SNAPS SHUT, THEN CRUMBLES TO RUST.
+obj=1,3,0,2,0,0,COOL WATER RESTORES YOU.
+obj=13,21,29,21,0,0,
+obj=4,5,18,2,0,0,
+obj=14,9,0,0,0,0,YOU STEP THROUGH THE WALL - IT WAS ONLY AN ILLUSION!
+obj=3,2,50,0,0,0,
+obj=29,9,12,0,0,0,
+obj=2,3,2,4,0,0,THE WATERS BEHIND ME WERE MINE ONCE... BUT YOU MAY DRINK. PASS, LIVING ONE, AND BEWARE THE HIDDEN SPIKES.
+
+[level]
+name=THE SAND PYRAMID
+guardhp=3
+facing=E
+intro=BEYOND THE VAULTS A PYRAMID LIES HALF-BURIED IN THE SAND. THE TOMB OF PHARAOH NEB-SENU HOLDS THE LAST AMULET OF ZOR. THE DEAD DO NOT REST HERE.
+map=
+################################
+################################
+##############....##############
+##############....##############
+###############D################
+###############.################
+###############.################
+###############.################
+###############.################
+###########@###.###&############
+###########..^......############
+###############.################
+###############.#...############
+######...######G#...##$..#######
+######...######.#%####...#######
+######....$.?.....^......#######
+################################
+##....#..P#####.########.....###
+##....#...#####.########.....###
+##....##.##..?.......###.....###
+###.####.##..........####.######
+##W..$.........H...........$..&#
+################################
+################################
+obj=13,19,0,0,0,0,THE HIEROGLYPHS WARN: WHO ENTERS THE HOUSE OF NEB-SENU SHALL MEET DEATH. YET THE WISE KNOW THAT FIRE UNDOES THE DEAD, AND THAT NOT EVERY WALL IS STONE.
+obj=12,15,0,0,0,0,HERE THE HIEROGLYPHS TELL OF AMENTEP, HIGH PRIEST OF NEB-SENU, WHO SEALED THE TOMB AND GUARDS IT STILL. THE PAINTED ROOF STONE TO THE EAST HIDES A TREASURE.
+obj=18,15,2,0,0,0,STONE SPIKES SPRING FROM THE FLOOR!
+obj=13,10,3,1,1,0,YOU STUMBLE INTO A PIT OF OLD BONES AND CLAMBER OUT.
+obj=15,13,0,2,30,0,A MUMMY IN ROTTING BANDAGES SHAMBLES TOWARDS YOU. NO BLADE COULD HARM IT.
+obj=17,14,0,0,0,0,THE PAINTED STONE WAS ONLY CLOTH! YOU PUSH THROUGH.
+obj=2,21,0,3,0,0,YOU DRINK FROM THE SACRED BASIN. THE WATER IS COOL AND SWEET.
+obj=11,9,12,20,0,0,THE SUN DISC FLARES GOLD AND CARRIES YOU DOWN TO THE ENTRANCE HALL!
+obj=15,4,3,0,0,0,
+obj=30,21,1,2,10,6,WATER AND HEALING DRAUGHTS! A POTION FOR ONLY 10 GOLD PIECES.
+obj2=30,21,MAY THE SANDS BE KIND TO YOU, FRIEND.
+obj=19,9,2,0,0,0,I AM THE PRIEST WHO SEALED THIS TOMB. SPEAK MY NAME, THIEF, AND I MAY YET OPEN THE WAY.
+script=
+# THE SAND PYRAMID - a tomb adventure in the old two-word style.
+# Torch from the brazier, scarab from the sand, the mummy burnt,
+# the priest's name spoken, the curse warded off with the ankh.
+item torch "AN UNLIT TORCH" at 11,19 nouns TORCH desc "A STICK WRAPPED IN OILY RAGS."
+item littorch "A BURNING TORCH" nowhere nouns TORCH desc "IT CRACKLES AND SMOKES."
+item brazier "A BURNING BRAZIER" at 8,17 fixed nouns BRAZIER,FIRE desc "FLAMES LEAP FROM A BRONZE BOWL. WHO KEEPS IT LIT?"
+item shovel "A WOODEN SHOVEL" at 3,18 nouns SHOVEL,SPADE desc "LEFT BY SOME LESS LUCKY ROBBER."
+item scarab "A GOLDEN SCARAB" nowhere nouns SCARAB,BEETLE desc "A BEETLE OF SOLID GOLD, FLAT ON ONE SIDE."
+item ankh "A SILVER ANKH" at 6,13 nouns ANKH desc "THE SIGN OF LIFE. IT FEELS WARM."
+item idol "A GOLDEN IDOL" at 24,13 nouns IDOL desc "A JACKAL-HEADED GOD WITH RUBY EYES."
+item collar "A JEWELLED COLLAR" at 19,12 nouns COLLAR,JEWELS desc "LAPIS AND GOLD, FIT FOR A QUEEN."
+item coffin "A STONE SARCOPHAGUS" at 16,2 fixed nouns SARCOPHAGUS,COFFIN,LID desc "CARVED WITH THE FACE OF NEB-SENU. THE LID IS HEAVY."
+
+# fire
+on LIGHT TORCH if carried torch and present brazier then swap torch littorch; counter flame = 45;
+  say "THE RAGS CATCH. YOUR TORCH BLAZES."
+on LIGHT TORCH if carried littorch then say "IT IS ALREADY BURNING."
+on LIGHT TORCH if carried torch then say "YOU HAVE NO FLAME. PERHAPS SOMEONE KEEPS A FIRE NEARBY."
+every turn if carried littorch then sub flame 1
+every turn if carried littorch and counter flame < 1 then swap littorch torch;
+  say "YOUR TORCH GUTTERS OUT."
+on EXAMINE BRAZIER if here brazier then say "FLAMES LEAP FROM A BRONZE BOWL. YOU COULD LIGHT SOMETHING HERE."
+
+# sand and the scarab
+on arrive if at 27,18 and not flag dug then say "THE SAND HERE IS HEAPED IN A STRANGE MOUND."
+on DIG any if at 27,18 and carried shovel and not flag dug then put scarab at 27,18; set dug;
+  score 20; say "YOUR SHOVEL STRIKES METAL. A GOLDEN SCARAB GLINTS IN THE SAND!"
+on DIG any if at 27,18 and not carried shovel then say "THE SAND IS TOO DEEP TO MOVE WITH YOUR HANDS."
+on DIG any if carried shovel then say "YOU DIG A LITTLE AND FIND ONLY MORE SAND."
+on DIG any then say "YOU HAVE NOTHING TO DIG WITH."
+synonym EXCAVATE = DIG
+
+# the sealed wall
+on arrive if at 15,17 and not flag sealopen then say "A WALL SEALS THE WAY NORTH. IN IT IS A HOLLOW SHAPED LIKE A BEETLE."
+on PLACE SCARAB if at 15,17 and carried scarab then destroy scarab; cell 15,16 floor; set sealopen;
+  score 20; say "THE SCARAB FITS EXACTLY. WITH A DEEP GRINDING THE WALL SINKS INTO THE FLOOR!"
+on PLACE SCARAB if carried scarab then say "THERE IS NOWHERE TO PUT IT HERE."
+on PLACE any then say "YOU HAVE NOTHING TO PLACE."
+synonym INSERT = PLACE
+synonym PUT = PLACE
+on EXAMINE HOLLOW if at 15,17 and not flag sealopen then say "IT IS EXACTLY THE SHAPE OF A SCARAB BEETLE."
+
+# the mummy
+on BURN MUMMY if ahead 15,13 and carried littorch then cell 15,13 floor; score 30;
+  say "YOU THRUST THE TORCH INTO THE BANDAGES. THE MUMMY BURSTS INTO FLAME AND CRUMBLES TO ASH!"
+on ATTACK MUMMY if ahead 15,13 and carried littorch then cell 15,13 floor; score 30;
+  say "YOU THRUST THE TORCH INTO THE BANDAGES. THE MUMMY BURSTS INTO FLAME AND CRUMBLES TO ASH!"
+on BURN MUMMY if ahead 15,13 then say "YOU NEED A FLAME TO DO THAT."
+on BURN any then say "THERE IS NOTHING HERE TO BURN."
+synonym SCORCH = BURN
+
+# the priest's ghost
+on SAY AMENTEP if ahead 19,9 and not flag named then set named; give key3; score 20;
+  speak "AMENTEP... IT HAS BEEN SO LONG SINCE ANYONE SPOKE MY NAME. TAKE THE GOLDEN KEY, AND MAY THE GODS FORGIVE YOU.";
+  say "THE GHOST PRESSES A GOLDEN KEY INTO YOUR HAND."
+on SAY AMENTEP if ahead 19,9 then speak "I HAVE GIVEN YOU ALL I HAVE. GO."
+on SAY any if ahead 19,9 then speak "THAT IS NOT MY NAME."
+on SAY any then say "YOUR WORDS ECHO DOWN THE EMPTY HALLS."
+synonym CALL = SAY
+
+# the burial chamber and the curse
+on arrive if at 15,3 and not flag cursed then say "THE BURIAL CHAMBER OF NEB-SENU! GOLD GLEAMS IN THE DUST."
+on OPEN SARCOPHAGUS if here coffin and not flag cursed and carried ankh then cell 14,2 amulet; set cursed;
+  say "THE LID GRINDS ASIDE. AN AMULET ROLLS FROM THE PHARAOH'S HAND ONTO THE FLOOR!";
+  say "A COLD WIND MOANS... BUT YOUR ANKH GLOWS AND THE CURSE PASSES YOU BY."
+on OPEN SARCOPHAGUS if here coffin and not flag cursed then cell 14,2 amulet; set cursed;
+  say "THE LID GRINDS ASIDE. AN AMULET ROLLS FROM THE PHARAOH'S HAND ONTO THE FLOOR!";
+  say "A COLD WIND MOANS. YOU HAVE BEEN CURSED!"
+on OPEN SARCOPHAGUS if here coffin then say "THE PHARAOH SLEEPS. LET HIM BE."
+on OPEN SARCOPHAGUS then say "IT IS TOO FAR AWAY. STAND BESIDE IT."
+every turn if flag cursed and not carried ankh and chance 30 then hurt 1;
+  say "THE PHARAOH'S CURSE BURNS YOUR SKIN!"
+
+# treasures
+on TAKE IDOL if here idol and not flag gotidol then set gotidol; score 40; continue
+on TAKE COLLAR if here collar and not flag gotcollar then set gotcollar; score 40; continue
+on EXAMINE ANKH if present ankh then say "THE SIGN OF LIFE. IT IS SAID TO WARD OFF CURSES."
+endscript

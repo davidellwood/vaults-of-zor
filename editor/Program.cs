@@ -1,10 +1,11 @@
-// ZorEdit - Program.cs: entry point and command-line mode.
+﻿// ZorEdit - Program.cs: entry point and command-line mode.
 //
 //   ZorEdit.exe [pack.zlp]                      open the editor
 //   ZorEdit.exe /lev  pack.zlp out.lev          compile a level file
 //   ZorEdit.exe /cmd  pack.zlp out.cmd          game with the pack built in
 //   ZorEdit.exe /engine out.cmd                 game engine only (loads ZOR/LEV)
 //   ZorEdit.exe /check pack.zlp                 check every level
+//   ZorEdit.exe /convert old.zlp new.zlp        save a pack (an older one is converted) as format 5
 //   ZorEdit.exe /preview pack.zlp title.png     save the title screen as a picture
 // Exit code 0 = success. Messages go to the console when run from one.
 using System;
@@ -46,9 +47,13 @@ namespace ZorEdit
             }
             if (a.Length < 2) return Usage();
             Pack p = Zlp.Load(a[1]);
-            List<string> problems = new List<string>();
-            for (int i = 0; i < p.Levels.Count; i++) problems.AddRange(Checker.Check(p.Levels[i], i));
-            problems.AddRange(Checker.CheckScripts(p));
+            if (cmd == "/convert" && a.Length == 3)
+            {
+                Zlp.Save(p, a[2]);
+                Console.WriteLine("Wrote " + a[2] + " (" + p.Levels.Count + " levels, " + p.Types.Count + " kinds of object)");
+                return 0;
+            }
+            List<string> problems = Checker.Check(p);
             foreach (string s in problems) Console.WriteLine(s);
             if (problems.Any(s => s.StartsWith("ERROR"))) return 2;
             switch (cmd)
@@ -81,7 +86,7 @@ namespace ZorEdit
 
         static int Usage()
         {
-            Console.Error.WriteLine("usage: ZorEdit [pack.zlp] | /lev pack.zlp out.lev | /cmd pack.zlp out.cmd | /engine out.cmd | /check pack.zlp | /preview pack.zlp out.png");
+            Console.Error.WriteLine("usage: ZorEdit [pack.zlp] | /lev pack.zlp out.lev | /cmd pack.zlp out.cmd | /engine out.cmd | /check pack.zlp | /convert old.zlp new.zlp | /preview pack.zlp out.png");
             return 1;
         }
     }

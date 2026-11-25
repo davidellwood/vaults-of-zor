@@ -1,0 +1,251 @@
+; ZorEdit object library (format 5). Nothing here is built into the game:
+; "Add from library" copies the objects you pick into your pack, where you can
+; change or delete them. Objects another one needs (a door needs a key) come too.
+; The first comment line of each script is shown in the library list.
+
+[pack]
+format=5
+
+[object]
+id=key
+name=A KEY
+look=key
+flags=carry
+nouns=KEY
+script=
+# Opens a door whose P1 is the same as the key's P1 (so you can have many locks).
+endscript
+
+[object]
+id=door
+name=A DOOR
+look=door
+flags=solid
+nouns=DOOR
+desc=A STOUT IRON-BOUND DOOR.
+script=
+# Locked door: a carried key with the same P1 opens it and is used up.
+on OPEN if ahead this and matches key then useup key; remove this; say "THE KEY TURNS. THE DOOR GROANS OPEN."
+on USE if ahead this and matches key then useup key; remove this; say "THE KEY TURNS. THE DOOR GROANS OPEN."
+on OPEN if ahead this then say "IT IS LOCKED. YOU NEED THE RIGHT KEY."
+on bump then say "THE DOOR IS LOCKED."
+synonym UNLOCK = OPEN
+endscript
+
+[object]
+id=sword
+name=A SHORT SWORD
+look=sword
+flags=carry,keep
+nouns=SWORD
+script=
+# A weapon; the guardian can only be hurt by someone carrying it.
+endscript
+
+[object]
+id=guardian
+name=THE GUARDIAN
+look=guardian
+flags=solid
+nouns=GUARDIAN,MONSTER
+value=3
+desc=THE HORNED GUARDIAN GLARES AT YOU AND SNORTS.
+script=
+# Monster: blocks the way, fights back; value = hit points. Needs the sword.
+on bump then say "THE GUARDIAN BARS THE WAY!"
+on ATTACK if ahead this and has sword and chance 70 then value - 1; say "YOUR SWORD BITES DEEP!"
+on ATTACK if ahead this and has sword then say "THE GUARDIAN DODGES."
+on ATTACK if ahead this then say "YOUR FISTS DO NOTHING! YOU NEED A WEAPON."
+every turn if value < 1 then remove this; say "THE GUARDIAN CRASHES DOWN, DEAD!"
+every turn if near this and chance 35 then say "THE GUARDIAN GORES YOU!"; hurt 3 random
+synonym KILL = ATTACK
+synonym FIGHT = ATTACK
+synonym HIT = ATTACK
+endscript
+
+[object]
+id=potion
+name=A RED POTION
+look=potion
+flags=carry,keep
+nouns=POTION
+value=6
+script=
+# Healing potion: DRINK heals by its value.
+on DRINK if carried this then say "YOU FEEL STRONGER."; heal value; remove this
+on USE if carried this then say "YOU FEEL STRONGER."; heal value; remove this
+endscript
+
+[object]
+id=gold
+name=SOME GOLD
+look=gold
+nouns=GOLD,COINS
+value=10
+script=
+# Gold pile: TAKE adds its value to the gold counter (status line) and the score.
+on TAKE if here this then add gold value; score value; say "YOU GATHER THE GOLD."; remove this
+endscript
+
+[object]
+id=amulet
+name=THE AMULET
+look=amulet
+flags=carry
+nouns=AMULET
+script=
+# The treasure to bring back to the ladder.
+on TAKE if here this then get this; say "YOU TAKE THE AMULET."; say "NOW BACK TO THE LADDER!"
+endscript
+
+[object]
+id=ladder
+name=A LADDER
+look=ladder
+nouns=LADDER
+desc=THE LADDER UP TO DAYLIGHT.
+script=
+# Exit: climbing it with the amulet finishes the level.
+on arrive if has amulet then take amulet; score 100; say "YOU ESCAPE WITH THE AMULET!"; next; stop
+on arrive then say "THE LADDER LEADS UP - BUT NOT WITHOUT THE AMULET!"
+endscript
+
+[object]
+id=stairs
+name=A STAIRWAY
+look=ladder
+nouns=STAIRS,STAIRWAY
+desc=STONE STEPS LEAD DOWN INTO THE DARK.
+script=
+# Exit: stepping onto it goes straight to the next level.
+on arrive then say "YOU DESCEND THE STAIRS."; next
+endscript
+
+[object]
+id=sign
+name=A SIGN
+look=sign
+nouns=SIGN
+script=
+# Sign: its description is what it says, shown when you step onto it.
+on arrive then say "A SIGN READS:"; say this 1
+endscript
+
+[object]
+id=trap
+name=A TRAP
+look=none
+nouns=TRAP
+value=3
+script=
+# Hidden trap: hurts by its value, then can be seen (becomes trapv).
+on arrive then say "CLICK! A TRAP SPRINGS!"; hurt value; become trapv
+endscript
+
+[object]
+id=trapv
+name=A TRAP
+look=trap
+nouns=TRAP
+value=3
+desc=THE JAWS OF A TRAP.
+script=
+# Visible trap: hurts by its value every time.
+on arrive then say "THE TRAP BITES!"; hurt value
+endscript
+
+[object]
+id=teleporter
+name=A GLOWING CIRCLE
+look=teleporter
+nouns=CIRCLE
+desc=A CIRCLE OF LIGHT ON THE FLOOR.
+script=
+# Teleporter: sends the player to its target (P1,P2).
+on arrive then say "THE VAULT SPINS AROUND YOU..."; goto target
+endscript
+
+[object]
+id=fountain
+name=A FOUNTAIN
+look=fountain
+nouns=FOUNTAIN,WATER
+value=2
+desc=A FOUNTAIN BUBBLES HERE.
+script=
+# Fountain: heals fully when stepped on; value = drinks before it runs dry.
+on arrive if value >= 2 then say "YOU DRINK FROM THE FOUNTAIN."; heal 0; value - 1; stop
+on arrive then say "YOU DRINK FROM THE FOUNTAIN."; heal 0; remove this; say "THE FOUNTAIN RUNS DRY."
+endscript
+
+[object]
+id=plate
+name=A STONE PLATE
+look=plate
+nouns=PLATE
+desc=A STONE PLATE IN THE FLOOR.
+script=
+# Pressure plate: the first time it is stepped on, its target cell (P1,P2) opens.
+on arrive if value < 1 then value = 1; cell target open; say "CLICK! STONE GRINDS NEARBY."
+endscript
+
+[object]
+id=secret
+name=A WALL
+look=wall
+nouns=WALL
+desc=A WALL OF COLD, DAMP STONE.
+script=
+# Secret wall: looks like a wall, but the player can walk through it.
+on arrive then say "THE WALL WAS AN ILLUSION!"; remove this
+endscript
+
+[object]
+id=chest
+name=A CHEST
+look=thing
+flags=solid
+nouns=CHEST,BOX
+value=25
+desc=AN OLD WOODEN CHEST.
+script=
+# Treasure chest: OPEN it once for its value in gold.
+on OPEN if ahead this and value >= 1 then add gold value; score value; value = 0; say "INSIDE IS A PILE OF GOLD!"
+on OPEN if ahead this then say "IT IS EMPTY."
+endscript
+
+[object]
+id=hermit
+name=AN OLD HERMIT
+look=hermit
+flags=solid
+nouns=HERMIT
+script=
+# Character who talks: says text 2 the first time, text 3 after that.
+on TALK if value < 1 then speak this 2; value = 1
+on TALK then speak this 3
+endscript
+
+[object]
+id=merchant
+name=A MERCHANT
+look=merchant
+flags=solid
+nouns=MERCHANT,TRADER
+script=
+# Character who sells a potion for 15 gold (change the numbers in the rules).
+on TALK if value < 1 and counter gold >= 15 then speak this 2; sub gold 15; say "YOU PAY 15 GOLD."; give potion; say "YOU RECEIVE A RED POTION."; value = 1
+on TALK if value < 1 then speak this 2; say "YOU NEED 15 GOLD."
+on TALK then speak this 3
+endscript
+
+[object]
+id=ghost
+name=A GHOST
+look=ghost
+flags=solid
+nouns=GHOST,SPIRIT
+script=
+# Character who says text 2, then steps aside and vanishes.
+on TALK then speak this 2; remove this; say "AND WITH THAT, IT IS GONE."
+endscript

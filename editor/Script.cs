@@ -1,17 +1,19 @@
-// ZorEdit - Script.cs: the level script language (Scott Adams style rules).
+// ZorEdit - Script.cs: the rule language (Scott Adams style, format 5).
 //
-// A level script declares items and rules:
+// A script is a list of rules, one per line (a line starting with a space
+// continues the one before; '#' starts a comment):
 //
-//   item lamp "A DUSTY LANTERN" at 5,7 nouns LANTERN,LAMP desc "AN OLD LANTERN."
-//   item idol "A STONE IDOL" at 9,3 fixed nouns IDOL
-//   synonym IGNITE = LIGHT
-//   on LIGHT LAMP if carried lamp then swap lamp litlamp; say "IT GLOWS."
-//   every turn if flag cursed and chance 20 then hurt 1
-//   on arrive if at 12,5 and not flag seen then say "AN ALTAR."; set seen
+//   on OPEN if ahead this and has key then take key; remove this; say "IT OPENS."
+//   on TAKE if here this then add gold value; score value; remove this
+//   on arrive then say this 2; goto target
+//   every turn if near this and chance 30 then say "IT BITES!"; hurt 2 random
+//   synonym UNLOCK = OPEN
 //
-// '#' starts a comment; a line starting with a space continues the one before.
-// Verbs and nouns are created by using them; flags and counters by naming them.
-// Flags, counters and the vocabulary are shared by all levels of a pack.
+// Rules can live in four places: the pack script (no particular object), an
+// object type's behaviours ("this" = the placed object of that type the rule is
+// about), a level script, or one placed object's own behaviours. Level rules can
+// name the level's objects by their object names. Verbs and nouns are created
+// by using them, flags and counters by naming them; all are shared by the pack.
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -20,66 +22,115 @@ using System.Text.RegularExpressions;
 
 namespace ZorEdit
 {
-    public class LevelScript
+    /// Rules and texts of the pack, or of one level.
+    public class RuleSet
     {
-        public List<byte[]> Items = new List<byte[]>();     // 6 bytes each
         public List<byte[]> Rules = new List<byte[]>();
-        public List<byte[]> Texts = new List<byte[]>();     // encoded, 0-terminated
-        public bool Empty { get { return Items.Count == 0 && Rules.Count == 0; } }
+        public List<byte[]> Texts = new List<byte[]>();     // encoded, without the 0
+
+        public int Text(string t, int width)
+        {
+            List<byte> b = new List<byte>();
+            Compiler.AddText(b, Util.Wrap(t, width));
+            return Intern(b.ToArray());
+        }
+        public int Speech(string t)
+        {
+            List<byte> b = new List<byte>();
+            Compiler.AddSpeech(b, t);
+            b.RemoveAt(b.Count - 1);
+            return Intern(b.ToArray());
+        }
+        int Intern(byte[] t)
+        {
+            for (int i = 0; i < Texts.Count; i++) if (Texts[i].SequenceEqual(t)) return i + 1;
+            Texts.Add(t);
+            return Texts.Count;
+        }
+        public void WriteRules(List<byte> b)
+        {
+            b.Add((byte)Math.Min(255, Rules.Count));
+            foreach (byte[] r in Rules.Take(255)) b.AddRange(r);
+        }
+        public void WriteTexts(List<byte> b, Action<List<byte>, int, int> patch)
+        {
+            int n = Math.Min(255, Texts.Count);
+            b.Add((byte)n);
+            int tab = b.Count;
+            for (int t = 0; t < n; t++) { b.Add(0); b.Add(0); }
+            for (int t = 0; t < n; t++) { patch(b, tab + t * 2, b.Count); b.AddRange(Texts[t]); b.Add(0); }
+        }
     }
 
     public class ScriptCompiler
     {
+        // the engine's own commands (rules may use them to change what they do)
         public static readonly Dictionary<string, int> BuiltinVerbs = new Dictionary<string, int>
         {
             {"F",1},{"FORWARD",1},{"GO",1},{"WALK",1},{"B",2},{"BACK",2},{"L",3},{"LEFT",3},{"R",4},{"RIGHT",4},
-            {"T",5},{"TURN",5},{"AROUND",6},{"G",7},{"GET",7},{"TAKE",7},{"O",8},{"OPEN",8},{"UNLOCK",8},
-            {"U",9},{"USE",9},{"A",10},{"ATTACK",10},{"FIGHT",10},{"KILL",10},{"HIT",10},{"D",11},{"DRINK",11},
+            {"T",5},{"TURN",5},{"AROUND",6},{"G",7},{"GET",7},{"TAKE",7},
             {"X",12},{"LOOK",12},{"EXAMINE",12},{"I",13},{"INV",13},{"INVENTORY",13},{"H",14},{"HELP",14},{"?",14},
             {"S",15},{"SCORE",15},{"Q",16},{"QUIT",16},{"TALK",17},{"SPEAK",17},{"ASK",17},{"GREET",17},{"HELLO",17},
             {"DROP",18},
         };
-        public static readonly string[] CellWords = { "FLOOR", "WALL", "DOOR", "LADDER", "GUARDIAN", "KEY", "SWORD", "POTION", "GOLD",
-            "AMULET", "SIGN", "TRAP", "TELEPORTER", "FOUNTAIN", "PLATE", "SECRET", "HERMIT", "MERCHANT", "GHOST" };
-        static readonly string[] HaveWords = { "SWORD", "AMULET", "KEY0", "KEY1", "KEY2", "KEY3", "POTION", "GOLD" };
+        public const int Every = 0, Start = 253, Bump = 254, Arrive = 255, This = 255;
+        static readonly string[] CellKinds = { "FLOOR", "WALL", "OPEN" };
 
         // pack-wide state
         public Dictionary<string, int> Verbs = new Dictionary<string, int>();    // script words -> id (incl. synonyms of built-ins)
         public Dictionary<string, int> Nouns = new Dictionary<string, int>();
         public Dictionary<string, int> Flags = new Dictionary<string, int>();
         public Dictionary<string, int> Counters = new Dictionary<string, int>();
-        int nextVerb = 32, nextNoun = 1;
         public List<string> Errors = new List<string>();
+        readonly Pack pack;
+        int nextVerb = 32, nextNoun = 1;
 
+        // the script being compiled
         string where;
-        Dictionary<string, int> items;
-        LevelScript cur;
+        RuleSet cur;
+        int scope, self;                    // scope: 0 or type + 1; self: placed object index or -1
+        Dictionary<string, int> insts;      // object names of the level (null in pack rules)
 
         class Stmt { public int Line; public List<string> T; }
 
-        // ------------------------------------------------------------ public
-        public LevelScript CompileLevel(string script, int levelIndex)
+        public ScriptCompiler(Pack p) { pack = p; }
+
+        // ------------------------------------------------------------ passes
+        /// Pass 1: the verbs and nouns rules are written for.
+        public void RegisterWords(string script, string label)
         {
-            where = "Level " + (levelIndex + 1) + " script";
-            cur = new LevelScript();
-            items = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            List<Stmt> stmts = Split(script ?? "");
-            // pass 1: items (their nouns join the vocabulary)
-            foreach (Stmt s in stmts) if (Is(s, 0, "ITEM")) Try(s, () => ItemDecl(s));
-            // pass 2: words used by rules, then synonyms
-            foreach (Stmt s in stmts) if (Is(s, 0, "ON") && s.T.Count > 1 && !Is(s, 1, "ARRIVE")) Try(s, () => RegisterRuleWords(s));
-            foreach (Stmt s in stmts) if (Is(s, 0, "SYNONYM")) Try(s, () => Synonym(s));
-            // pass 3: rules
-            foreach (Stmt s in stmts)
+            where = label;
+            foreach (Stmt s in Split(script))
+                if (Is(s, 0, "ON") && s.T.Count > 1 && !IsTrigger(s.T[1]))
+                    Try(s, () =>
+                    {
+                        VerbId(Up(s.T[1]));
+                        if (s.T.Count > 2 && !IsKey(s.T[2]) && !Is(s, 2, "ANY")) NounId(Up(s.T[2]));
+                    });
+        }
+
+        /// Pass 2: synonyms.
+        public void Synonyms(string script, string label)
+        {
+            where = label;
+            foreach (Stmt s in Split(script)) if (Is(s, 0, "SYNONYM")) Try(s, () => Synonym(s));
+        }
+
+        /// Pass 3: the rules, into rs. scopeType = 0 or type index + 1; selfInst =
+        /// the placed object the rules belong to (-1 = none); names = the level's objects.
+        public void Compile(string script, string label, RuleSet rs, int scopeType, int selfInst, Dictionary<string, int> names)
+        {
+            where = label;
+            cur = rs;
+            scope = scopeType;
+            self = selfInst;
+            insts = names;
+            foreach (Stmt s in Split(script))
             {
-                if (Is(s, 0, "ITEM") || Is(s, 0, "SYNONYM")) continue;
+                if (Is(s, 0, "SYNONYM")) continue;
                 if (Is(s, 0, "ON") || Is(s, 0, "EVERY")) Try(s, () => Rule(s));
-                else Err(s, "a statement starts with item, synonym, on or every, not '" + s.T[0] + "'.");
+                else Err(s, "a rule starts with on, every or synonym, not '" + s.T[0] + "'.");
             }
-            if (cur.Items.Count > 32) Errors.Add(where + ": more than 32 items.");
-            if (cur.Rules.Count > 255) Errors.Add(where + ": more than 255 rules.");
-            if (cur.Texts.Count > 255) Errors.Add(where + ": more than 255 texts.");
-            return cur;
         }
 
         /// The pack vocabulary table read by the engine.
@@ -98,48 +149,11 @@ namespace ZorEdit
             b.AddRange(Encoding.ASCII.GetBytes(w)); b.Add(0);
         }
 
-        /// Item positions declared with "at x,y" (for the editor's map), no checking.
-        public static List<KeyValuePair<Point2, string>> ItemPositions(string script)
-        {
-            List<KeyValuePair<Point2, string>> r = new List<KeyValuePair<Point2, string>>();
-            foreach (Match m in Regex.Matches(script ?? "", @"^\s*item\s+(\S+)\s+""[^""]*"".*?\bat\s+(\d+)\s*,\s*(\d+)", RegexOptions.IgnoreCase | RegexOptions.Multiline))
-                r.Add(new KeyValuePair<Point2, string>(new Point2(int.Parse(m.Groups[2].Value), int.Parse(m.Groups[3].Value)), m.Groups[1].Value));
-            return r;
-        }
-
         // ------------------------------------------------------------ statements
-        void ItemDecl(Stmt s)
+        public int SafeNounGroup(List<string> words, string label)
         {
-            // item NAME "TITLE" (at X,Y | carried | nowhere) [fixed] [nouns A,B] [desc "TEXT"]
-            if (s.T.Count < 3) throw new Exception("item needs a name and a \"title\".");
-            string name = s.T[1];
-            if (!IsWord(name)) throw new Exception("item name '" + name + "' should be a single word.");
-            if (items.ContainsKey(name)) throw new Exception("item '" + name + "' is declared twice.");
-            if (cur.Items.Count >= 32) throw new Exception("a level can have at most 32 items.");
-            string title = Quoted(s, 2);
-            int x = 0, y = 0, noun = 0, flags = 1, desc = 0;
-            int i = 3;
-            while (i < s.T.Count)
-            {
-                string k = s.T[i].ToUpperInvariant();
-                if (k == "AT") { x = Num(s, i + 1, 1, 30); Expect(s, i + 2, ","); y = Num(s, i + 3, 1, 22); i += 4; }
-                else if (k == "CARRIED") { x = 0; y = 1; i++; }
-                else if (k == "NOWHERE") { x = 0; y = 0; i++; }
-                else if (k == "FIXED") { flags = 0; i++; }
-                else if (k == "NOUNS" || k == "NOUN")
-                {
-                    i++;
-                    List<string> words = new List<string>();
-                    while (i < s.T.Count) { words.Add(Up(s.T[i])); i++; if (i < s.T.Count && s.T[i] == ",") i++; else break; }
-                    noun = NounGroup(words);
-                }
-                else if (k == "DESC") { desc = AddText(Quoted(s, i + 1), 30); i += 2; }
-                else throw new Exception("unexpected '" + s.T[i] + "' in item " + name + ".");
-            }
-            if (noun == 0) noun = NounGroup(new List<string> { Up(name) });
-            items[name] = cur.Items.Count;
-            int t = AddText(Util.Fit(title, 24), 30);
-            cur.Items.Add(new[] { (byte)x, (byte)y, (byte)noun, (byte)flags, (byte)t, (byte)desc });
+            try { return NounGroup(words); }
+            catch (Exception ex) { Errors.Add(label + ": " + ex.Message); return 0; }
         }
 
         int NounGroup(List<string> words)
@@ -149,12 +163,6 @@ namespace ZorEdit
             if (id == 0) { if (nextNoun > 254) throw new Exception("too many nouns."); id = nextNoun++; }
             foreach (string w in words) if (!Nouns.ContainsKey(w)) Nouns[w] = id;
             return id;
-        }
-
-        void RegisterRuleWords(Stmt s)
-        {
-            VerbId(Up(s.T[1]));
-            if (s.T.Count > 2 && !IsKey(s.T[2]) && !s.T[2].Equals("ANY", StringComparison.OrdinalIgnoreCase)) NounId(Up(s.T[2]));
         }
 
         void Synonym(Stmt s)
@@ -170,32 +178,39 @@ namespace ZorEdit
                 Verbs[nw] = id;
             }
             else if (Nouns.TryGetValue(old, out id)) Nouns[nw] = id;
-            else throw new Exception("'" + old + "' is not a verb or noun used in the scripts so far.");
+            else throw new Exception("'" + old + "' is not a verb or noun used anywhere in the pack.");
         }
 
         void Rule(Stmt s)
         {
             int verb, noun = 0, i;
-            if (Is(s, 0, "EVERY")) { if (!Is(s, 1, "TURN")) throw new Exception("write: every turn ..."); verb = 0; i = 2; }
-            else if (Is(s, 1, "ARRIVE")) { verb = 255; i = 2; }
+            if (Is(s, 0, "EVERY")) { if (!Is(s, 1, "TURN")) throw new Exception("write: every turn ..."); verb = Every; i = 2; }
             else
             {
-                if (s.T.Count < 2) throw new Exception("on needs a verb.");
-                verb = VerbId(Up(s.T[1]));
+                if (s.T.Count < 2) throw new Exception("on needs a verb or arrive, bump or start.");
                 i = 2;
-                if (i < s.T.Count && !IsKey(s.T[i]))
+                string w = Up(s.T[1]);
+                if (w == "ARRIVE") verb = Arrive;
+                else if (w == "BUMP") verb = Bump;
+                else if (w == "START") verb = Start;
+                else
                 {
-                    if (!s.T[i].Equals("ANY", StringComparison.OrdinalIgnoreCase)) noun = NounId(Up(s.T[i]));
-                    i++;
+                    verb = VerbId(w);
+                    if (i < s.T.Count && !IsKey(s.T[i]))
+                    {
+                        if (!Is(s, i, "ANY")) noun = NounId(Up(s.T[i]));
+                        i++;
+                    }
                 }
             }
             List<byte[]> conds = new List<byte[]>(), acts = new List<byte[]>();
+            if (self >= 0) conds.Add(new byte[] { 21, (byte)self, 0, 0 });
             if (i < s.T.Count && Is(s, i, "IF"))
             {
                 i++;
                 while (true)
                 {
-                    conds.Add(Cond(s, ref i));
+                    conds.AddRange(Cond(s, ref i));
                     if (i < s.T.Count && Is(s, i, "AND")) { i++; continue; }
                     break;
                 }
@@ -210,104 +225,277 @@ namespace ZorEdit
                 break;
             }
             if (conds.Count + acts.Count > 60) throw new Exception("too many conditions and actions in one rule (60 at most).");
-            List<byte> r = new List<byte> { (byte)verb, (byte)noun, (byte)conds.Count, (byte)acts.Count };
+            List<byte> r = new List<byte> { (byte)verb, (byte)noun, (byte)scope, (byte)conds.Count, (byte)acts.Count };
             foreach (byte[] c in conds) r.AddRange(c);
             foreach (byte[] a in acts) r.AddRange(a);
             cur.Rules.Add(r.ToArray());
         }
 
-        byte[] Cond(Stmt s, ref int i)
+        static byte[] Op(int op, int a, int b, int c, bool not = false)
+        {
+            return new[] { (byte)(op | (not ? 0x80 : 0)), (byte)a, (byte)b, (byte)c };
+        }
+
+        List<byte[]> Cond(Stmt s, ref int i)
         {
             bool not = false;
             if (Is(s, i, "NOT")) { not = true; i++; }
             string k = Word(s, i++);
-            int op, a = 0, b = 0, c = 0;
+            List<byte[]> r = new List<byte[]>();
+            int x, y;
             switch (k)
             {
-                case "CARRIED": op = 1; a = Item(s, i++); break;
-                case "HERE": op = 2; a = Item(s, i++); break;
-                case "PRESENT": op = 3; a = Item(s, i++); break;
-                case "EXISTS": op = 4; a = Item(s, i++); break;
-                case "AT": op = 5; a = Num(s, i, 0, 31); Expect(s, i + 1, ","); b = Num(s, i + 2, 0, 23); i += 3; break;
-                case "AHEAD": op = 12; a = Num(s, i, 0, 31); Expect(s, i + 1, ","); b = Num(s, i + 2, 0, 23); i += 3; break;
-                case "FLAG": op = 6; a = Flag(s, i++); break;
+                case "CARRIED":
+                case "HAS":
+                    if (IsInst(s, i)) { r.Add(Op(1, Item(s, i++), 0, 0, not)); break; }
+                    {
+                        int t = TypeArg(s, i++), n = 0;
+                        if (IsNum(s, i)) n = Num(s, i++, 1, 255);
+                        r.Add(Op(11, t, n, 0, not));
+                        break;
+                    }
+                case "HERE":
+                    if (IsInst(s, i)) r.Add(Op(2, Item(s, i++), 0, 0, not));
+                    else r.Add(Op(18, TypeArg(s, i++), 0, 0, not));
+                    break;
+                case "PRESENT": r.Add(Op(3, Item(s, i++), 0, 0, not)); break;
+                case "EXISTS": r.Add(Op(4, Item(s, i++), 0, 0, not)); break;
+                case "NEAR": r.Add(Op(13, Item(s, i++), 0, 0, not)); break;
+                case "AT": Xy(s, ref i, false, out x, out y); r.Add(Op(5, x, y, 0, not)); break;
+                case "AHEAD":
+                case "FACING":
+                    if (IsNum(s, i)) { Xy(s, ref i, false, out x, out y); r.Add(Op(12, x, y, 0, not)); }
+                    else if (IsInst(s, i)) r.Add(Op(9, Item(s, i++), 0, 0, not));
+                    else r.Add(Op(17, TypeArg(s, i++), 0, 0, not));
+                    break;
+                case "FLAG": r.Add(Op(6, Flag(s, i++), 0, 0, not)); break;
                 case "COUNTER":
                     {
-                        a = Counter(s, i++);
-                        string rel = Tok(s, i++);
-                        int n = Num(s, i++, 0, 255);
-                        if (rel == ">=") { op = 7; b = n; }
-                        else if (rel == ">") { op = 7; b = Math.Min(255, n + 1); }
-                        else if (rel == "<") { op = 8; b = n; }
-                        else if (rel == "<=") { op = 8; b = Math.Min(255, n + 1); }
-                        else if (rel == "=")
-                        {
-                            throw new Exception("use 'counter " + s.T[i - 3] + " >= " + n + " and counter " + s.T[i - 3] + " < " + (n + 1) + "' to test for an exact value.");
-                        }
-                        else throw new Exception("compare a counter with >=, >, < or <=.");
+                        int c = Counter(s, i++);
+                        Compare(s, ref i, not, 7, 8, c, r, 65535);
                         break;
                     }
-                case "FACING": op = 9; a = Cell(s, i++); break;
-                case "CHANCE": op = 10; a = Math.Min(255, (Num(s, i++, 0, 100) * 256 + 50) / 100); break;
-                case "HAS":
+                case "VALUE":
                     {
-                        op = 11; a = Have(s, i++);
-                        if (a == 7) { int n = Num(s, i++, 0, 65535); b = n & 255; c = n >> 8; }
+                        int it = IsRel(s, i) ? This : Item(s, i++);
+                        if (it == This) NeedScope();
+                        Compare(s, ref i, not, 14, 15, it, r);
                         break;
                     }
+                case "HP": Compare(s, ref i, not, 16, -16, 0, r); break;
+                case "CHANCE": r.Add(Op(10, Math.Min(255, (Num(s, i++, 0, 100) * 256 + 50) / 100), 0, 0, not)); break;
+                case "IS":
+                    if (IsInst(s, i)) r.Add(Op(21, Item(s, i++), 0, 0, not));
+                    else { NeedScope(); r.Add(Op(19, TypeArg(s, i++), 0, 0, not)); }
+                    break;
+                case "MATCHES": NeedScope(); r.Add(Op(20, TypeArg(s, i++), 0, 0, not)); break;
                 default: throw new Exception("unknown condition '" + k + "'.");
             }
-            return new[] { (byte)(op | (not ? 0x80 : 0)), (byte)a, (byte)b, (byte)c };
+            return r;
+        }
+
+        /// REL N for a value compared with op ge (a >= N) or lt (a < N); lt < 0 means "not ge".
+        void Compare(Stmt s, ref int i, bool not, int ge, int lt, int a, List<byte[]> r, int max = 255)
+        {
+            string rel = Tok(s, i++);
+            int n = Num(s, i++, 0, max);
+            List<KeyValuePair<bool, int>> parts = new List<KeyValuePair<bool, int>>();   // (is ge, N)
+            if (rel == ">=") parts.Add(new KeyValuePair<bool, int>(true, n));
+            else if (rel == ">") parts.Add(new KeyValuePair<bool, int>(true, Math.Min(max, n + 1)));
+            else if (rel == "<") parts.Add(new KeyValuePair<bool, int>(false, n));
+            else if (rel == "<=") parts.Add(new KeyValuePair<bool, int>(false, Math.Min(max, n + 1)));
+            else if (rel == "=")
+            {
+                if (not) throw new Exception("'not ... = N' can't be tested; use < and > in two rules.");
+                parts.Add(new KeyValuePair<bool, int>(true, n));
+                if (n < max) parts.Add(new KeyValuePair<bool, int>(false, n + 1));
+            }
+            else throw new Exception("compare with >=, >, =, < or <=, not '" + rel + "'.");
+            foreach (KeyValuePair<bool, int> p in parts)
+            {
+                bool g = p.Key, neg = not;
+                int op = g ? ge : lt;
+                if (op < 0) { op = -op; neg = !neg; }
+                // counter ops: a = counter, b,c = N (16-bit); value ops: a = object, b = N; hp: a = N
+                r.Add(op == 16 ? Op(op, p.Value, 0, 0, neg) : Op(op, a, p.Value & 255, p.Value >> 8, neg));
+            }
         }
 
         byte[] Act(Stmt s, ref int i)
         {
             string k = Word(s, i++);
-            int op, a = 0, b = 0, c = 0;
+            int x, y, n, c;
             switch (k)
             {
-                case "SAY": op = 1; a = AddText(Quoted(s, i++), 30); break;
-                case "SPEAK": op = 2; a = AddSpeech(Quoted(s, i++)); break;
-                case "SET": op = 3; a = Flag(s, i++); break;
-                case "CLEAR": op = 4; a = Flag(s, i++); break;
-                case "GET": op = 5; a = Item(s, i++); break;
-                case "DROP": op = 6; a = Item(s, i++); break;
-                case "DESTROY": op = 7; a = Item(s, i++); break;
-                case "PUT": op = 8; a = Item(s, i++); if (!Is(s, i, "AT")) throw new Exception("write: put ITEM at X,Y"); b = Num(s, i + 1, 1, 30); Expect(s, i + 2, ","); c = Num(s, i + 3, 1, 22); i += 4; break;
-                case "SWAP": op = 9; a = Item(s, i++); b = Item(s, i++); break;
-                case "CELL": op = 10; a = Num(s, i, 1, 30); Expect(s, i + 1, ","); b = Num(s, i + 2, 1, 22); i += 3; c = Cell(s, i++); break;
-                case "GOTO": op = 11; a = Num(s, i, 1, 30); Expect(s, i + 1, ","); b = Num(s, i + 2, 1, 22); i += 3; break;
-                case "COUNTER": op = 12; a = Counter(s, i++); Expect(s, i++, "="); b = Num(s, i++, 0, 255); break;
-                case "ADD": op = 13; a = Counter(s, i++); b = Num(s, i++, 0, 255); break;
-                case "SUB": op = 14; a = Counter(s, i++); b = Num(s, i++, 0, 255); break;
-                case "SCORE": { op = 15; int n = Num(s, i++, 0, 65535); a = n & 255; b = n >> 8; break; }
-                case "HURT": op = 16; a = Num(s, i++, 0, 255); break;
-                case "HEAL": op = 17; a = Num(s, i++, 0, 255); break;
+                case "SAY":
+                case "SPEAK":
+                    if (!Tok(s, i).StartsWith("\""))
+                    {
+                        int it = Item(s, i++);
+                        return Op(k == "SAY" ? 30 : 31, it, Num(s, i++, 1, 20), 0);
+                    }
+                    return k == "SAY" ? Op(1, cur.Text(Quoted(s, i++), 30), 0, 0) : Op(2, cur.Speech(Quoted(s, i++)), 0, 0);
+                case "DIE": return Op(21, cur.Text(Quoted(s, i++), 30), 0, 0);
+                case "SET": return Op(3, Flag(s, i++), 0, 0);
+                case "CLEAR": return Op(4, Flag(s, i++), 0, 0);
+                case "GET": return Op(5, Item(s, i++), 0, 0);
+                case "DROP": return Op(6, Item(s, i++), 0, 0);
+                case "DESTROY":
+                case "REMOVE": return Op(7, Item(s, i++), 0, 0);
+                case "PUT":
+                    {
+                        int it = Item(s, i++);
+                        if (!Is(s, i, "AT")) throw new Exception("write: put OBJECT at X,Y");
+                        i++;
+                        Xy(s, ref i, true, out x, out y);
+                        return Op(8, it, x, y);
+                    }
+                case "SWAP": { int a = Item(s, i++); return Op(9, a, Item(s, i++), 0); }
+                case "CELL":
+                    {
+                        Xy(s, ref i, true, out x, out y);
+                        int kind = Array.IndexOf(CellKinds, Word(s, i));
+                        if (kind < 0) throw new Exception("a cell becomes floor, wall or open (floor, and solid objects there are removed), not '" + s.T[i] + "'.");
+                        i++;
+                        return Op(10, x, y, kind);
+                    }
+                case "GOTO": Xy(s, ref i, true, out x, out y); return Op(11, x, y, 0);
+                case "COUNTER":
+                    {
+                        int ctr = Counter(s, i++);
+                        string rel = Tok(s, i++);
+                        if (rel == "=") { n = Num(s, i++, 0, 65535); return Op(12, ctr, n & 255, n >> 8); }
+                        if (rel != "+" && rel != "-") throw new Exception("write: counter NAME = N, counter NAME + N or counter NAME - N");
+                        NumVal(s, ref i, 255, out n, out c);
+                        return Op(rel == "+" ? 13 : 14, ctr, n, c);
+                    }
+                case "ADD":
+                case "SUB":
+                    {
+                        int ctr = Counter(s, i++);
+                        NumVal(s, ref i, 255, out n, out c);
+                        return Op(k == "ADD" ? 13 : 14, ctr, n, c);
+                    }
+                case "SCORE": NumVal(s, ref i, 65535, out n, out c); return Op(15, n & 255, n >> 8, c);
+                case "HURT":
+                    {
+                        NumVal(s, ref i, 255, out n, out c);
+                        int rnd = 0;
+                        if (Is(s, i, "RANDOM")) { rnd = 1; i++; }
+                        return Op(16, n, rnd, c);
+                    }
+                case "HEAL": NumVal(s, ref i, 255, out n, out c); return Op(17, n, 0, c);
                 case "GIVE":
                 case "TAKE":
                     {
-                        op = k == "GIVE" ? 18 : 19; a = Have(s, i++);
-                        if (a == 7) { int n = Num(s, i++, 0, 65535); b = n & 255; c = n >> 8; }
-                        break;
+                        int t = TypeArg(s, i++);
+                        n = IsNum(s, i) ? Num(s, i++, 1, 255) : 0;
+                        return Op(k == "GIVE" ? 18 : 19, t, n, 0);
                     }
-                case "WIN": op = 20; break;
-                case "DIE": op = 21; a = AddText(Quoted(s, i++), 30); break;
-                case "INVENTORY": op = 22; break;
-                case "LOOK": op = 23; break;
-                case "CONTINUE": op = 24; break;
+                case "WIN": return Op(20, 0, 0, 0);
+                case "INVENTORY": return Op(22, 0, 0, 0);
+                case "LOOK": return Op(23, 0, 0, 0);
+                case "CONTINUE": return Op(24, 0, 0, 0);
+                case "NEXT": return Op(25, 0, 0, 0);
+                case "STOP": return Op(34, 0, 0, 0);
+                case "BECOME":
+                    {
+                        // become TYPE (this object) | become OBJECT TYPE
+                        int it = This;
+                        if (i + 1 < s.T.Count && s.T[i + 1] != ";") it = Item(s, i++);
+                        else NeedScope();
+                        return Op(26, it, TypeArg(s, i++), 0);
+                    }
+                case "VALUE":
+                    {
+                        // value [OBJECT] = N | + N | - N
+                        int it = This;
+                        if (Tok(s, i) != "=" && Tok(s, i) != "+" && Tok(s, i) != "-") it = Item(s, i++);
+                        else NeedScope();
+                        string rel = Tok(s, i++);
+                        int v = Num(s, i++, 0, 255);
+                        if (rel == "=") return Op(27, it, v, 0);
+                        if (rel == "+") return Op(28, it, v, 0);
+                        if (rel == "-") return Op(29, it, v, 0);
+                        throw new Exception("write: value = N, value + N or value - N");
+                    }
+                case "CREATE":
+                    {
+                        int t = TypeArg(s, i++);
+                        if (!Is(s, i, "AT")) throw new Exception("write: create TYPE at X,Y");
+                        i++;
+                        Xy(s, ref i, true, out x, out y);
+                        return Op(32, t, x, y);
+                    }
+                case "USEUP": NeedScope(); return Op(33, TypeArg(s, i++), 0, 0);
                 default: throw new Exception("unknown action '" + k + "'.");
             }
-            return new[] { (byte)op, (byte)a, (byte)b, (byte)c };
         }
 
-        // ------------------------------------------------------------ words and values
+        // ------------------------------------------------------------ arguments
+        /// A number, or "value" (this object's value) or "p1" (its P1).
+        void NumVal(Stmt s, ref int i, int max, out int n, out int c)
+        {
+            string w = Word(s, i);
+            if (w == "VALUE") { NeedScope(); n = 0; c = 1; i++; return; }
+            if (w == "P1") { NeedScope(); n = 0; c = 2; i++; return; }
+            n = Num(s, i++, 0, max);
+            c = 0;
+        }
+
+        /// X,Y, or "target" (this object's P1,P2) where allowed.
+        void Xy(Stmt s, ref int i, bool target, out int x, out int y)
+        {
+            if (Is(s, i, "TARGET"))
+            {
+                if (!target) throw new Exception("'target' can't be used here; give X,Y.");
+                NeedScope();
+                x = 255; y = 0; i++;
+                return;
+            }
+            x = Num(s, i, 0, Level.W - 1);
+            Expect(s, i + 1, ",");
+            y = Num(s, i + 2, 0, Level.H - 1);
+            i += 3;
+        }
+
+        void NeedScope()
+        {
+            if (scope == 0) throw new Exception("'this', 'value', 'p1' and 'target' only make sense in an object's behaviours.");
+        }
+
+        bool IsInst(Stmt s, int i)
+        {
+            if (i >= s.T.Count) return false;
+            if (Is(s, i, "THIS")) return true;
+            return insts != null && insts.ContainsKey(s.T[i]);
+        }
+
+        int Item(Stmt s, int i)
+        {
+            string n = Tok(s, i);
+            if (n.Equals("THIS", StringComparison.OrdinalIgnoreCase)) { NeedScope(); return This; }
+            int id;
+            if (insts != null && insts.TryGetValue(n, out id)) return id;
+            if (insts == null) throw new Exception("'" + n + "': pack and object rules can only refer to 'this' (or to kinds of object with has, here, give...).");
+            throw new Exception("no object called '" + n + "' on this level.");
+        }
+
+        int TypeArg(Stmt s, int i)
+        {
+            string n = Tok(s, i);
+            int t = pack.TypeIndex(n);
+            if (t < 0) throw new Exception("no kind of object called '" + n + "'.");
+            return t;
+        }
+
         int VerbId(string w)
         {
             int id;
             if (BuiltinVerbs.TryGetValue(w, out id)) return id;
             if (Verbs.TryGetValue(w, out id)) return id;
             CheckWord(w);
-            if (nextVerb > 254) throw new Exception("too many verbs.");
+            if (nextVerb > 252) throw new Exception("too many verbs.");
             Verbs[w] = id = nextVerb++;
             return id;
         }
@@ -322,14 +510,6 @@ namespace ZorEdit
             return id;
         }
 
-        int Item(Stmt s, int i)
-        {
-            string n = Tok(s, i);
-            int id;
-            if (!items.TryGetValue(n, out id)) throw new Exception("no item called '" + n + "' in this level.");
-            return id;
-        }
-
         int Flag(Stmt s, int i)
         {
             string n = Up(Tok(s, i));
@@ -338,62 +518,26 @@ namespace ZorEdit
             return id;
         }
 
-        int Counter(Stmt s, int i)
+        public int CounterId(string name)
         {
-            string n = Up(Tok(s, i));
+            string n = Up(name);
             int id;
-            if (!Counters.TryGetValue(n, out id)) { if (Counters.Count >= 8) throw new Exception("more than 8 counters."); Counters[n] = id = Counters.Count; }
+            if (!Counters.TryGetValue(n, out id)) { if (Counters.Count >= 16) throw new Exception("more than 16 counters."); Counters[n] = id = Counters.Count; }
             return id;
         }
-
-        int Cell(Stmt s, int i)
-        {
-            int c = Array.IndexOf(CellWords, Up(Tok(s, i)));
-            if (c < 0) throw new Exception("'" + s.T[i] + "' is not a kind of cell (" + string.Join(" ", CellWords).ToLowerInvariant() + ").");
-            return c;
-        }
-
-        int Have(Stmt s, int i)
-        {
-            string w = Up(Tok(s, i));
-            if (w == "KEY") w = "KEY0";
-            int c = Array.IndexOf(HaveWords, w);
-            if (c < 0) throw new Exception("'" + s.T[i] + "' should be sword, amulet, key0-key3, potion or gold.");
-            return c;
-        }
-
-        int AddText(string t, int width)
-        {
-            List<byte> b = new List<byte>();
-            List<string> lines = Util.Wrap(t, width);
-            for (int i = 0; i < lines.Count; i++) { if (i > 0) b.Add(13); b.AddRange(Encoding.ASCII.GetBytes(lines[i])); }
-            b.Add(0);
-            return Intern(b.ToArray());
-        }
-
-        int AddSpeech(string t)
-        {
-            List<byte> b = new List<byte>();
-            Compiler.AddSpeech(b, t);
-            return Intern(b.ToArray());
-        }
-
-        int Intern(byte[] t)
-        {
-            for (int i = 0; i < cur.Texts.Count; i++) if (cur.Texts[i].SequenceEqual(t)) return i + 1;
-            cur.Texts.Add(t);
-            return cur.Texts.Count;
-        }
+        int Counter(Stmt s, int i) { return CounterId(Tok(s, i)); }
 
         static string Up(string s) { return (s ?? "").ToUpperInvariant(); }
-        static bool IsWord(string s) { return Regex.IsMatch(s, @"^[A-Za-z][A-Za-z0-9_]*$"); }
         static void CheckWord(string w)
         {
             if (!Regex.IsMatch(w, @"^[A-Z0-9?][A-Z0-9]*$") || w.Length > 12) throw new Exception("'" + w + "' is not a usable word (letters and digits, up to 12).");
         }
         static readonly string[] Keys = { "IF", "THEN", "AND" };
         static bool IsKey(string t) { return Keys.Contains(Up(t)); }
+        static bool IsTrigger(string t) { string u = Up(t); return u == "ARRIVE" || u == "BUMP" || u == "START"; }
         static bool Is(Stmt s, int i, string w) { return i < s.T.Count && s.T[i].Equals(w, StringComparison.OrdinalIgnoreCase); }
+        static bool IsNum(Stmt s, int i) { int v; return i < s.T.Count && int.TryParse(s.T[i], out v); }
+        static bool IsRel(Stmt s, int i) { return i < s.T.Count && (s.T[i] == "=" || s.T[i] == "<" || s.T[i] == ">" || s.T[i] == "<=" || s.T[i] == ">="); }
         static string Tok(Stmt s, int i) { if (i >= s.T.Count) throw new Exception("the line ends too soon."); return s.T[i]; }
         static string Word(Stmt s, int i) { return Up(Tok(s, i)); }
         static void Expect(Stmt s, int i, string t) { if (Tok(s, i) != t) throw new Exception("expected '" + t + "' but found '" + s.T[i] + "'."); }
@@ -422,7 +566,7 @@ namespace ZorEdit
         static List<Stmt> Split(string script)
         {
             List<Stmt> r = new List<Stmt>();
-            string[] lines = script.Replace("\r", "").Split('\n');
+            string[] lines = (script ?? "").Replace("\r", "").Split('\n');
             Stmt cur = null;
             for (int n = 0; n < lines.Length; n++)
             {
@@ -436,7 +580,7 @@ namespace ZorEdit
             return r;
         }
 
-        static List<string> Tokens(string line)
+        public static List<string> Tokens(string line)
         {
             List<string> t = new List<string>();
             int i = 0;
@@ -453,7 +597,7 @@ namespace ZorEdit
                     i = j + 1;
                     continue;
                 }
-                if (ch == ',' || ch == ';' || ch == '=') { t.Add(ch.ToString()); i++; continue; }
+                if (ch == ',' || ch == ';' || ch == '=' || ch == '+' || ch == '-') { t.Add(ch.ToString()); i++; continue; }
                 if (ch == '<' || ch == '>')
                 {
                     if (i + 1 < line.Length && line[i + 1] == '=') { t.Add(ch + "="); i += 2; }
@@ -461,7 +605,7 @@ namespace ZorEdit
                     continue;
                 }
                 int k = i;
-                while (k < line.Length && !char.IsWhiteSpace(line[k]) && ",;=<>\"#".IndexOf(line[k]) < 0) k++;
+                while (k < line.Length && !char.IsWhiteSpace(line[k]) && ",;=<>\"#+-".IndexOf(line[k]) < 0) k++;
                 t.Add(line.Substring(i, k - i));
                 i = k;
             }

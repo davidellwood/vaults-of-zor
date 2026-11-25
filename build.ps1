@@ -1,4 +1,4 @@
-# Build VAULTS OF ZOR and its level editor.
+﻿# Build VAULTS OF ZOR and its level editor.
 #   .\build.ps1          gfx.inc -> zout\zor.cmd (engine) -> ZorEdit.exe -> ZOR.CMD + ZOR.LEV
 #   .\build.ps1 -Run     ...then run ZOR.CMD in trs80gp (boots TRSDOS)
 # Needs Python 3 and zmac (tools\zmac, on PATH or $env:ZMAC). ZorEdit is compiled with the
@@ -17,7 +17,8 @@ if ($LASTEXITCODE -ne 0) { throw "zmac failed" }
 $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 if (-not (Test-Path $csc)) { $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe' }
 & $csc /nologo /target:winexe /out:ZorEdit.exe /optimize+ /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Core.dll `
-    "/resource:zout\zor.cmd,engine.cmd" editor\Program.cs editor\Pack.cs editor\MainForm.cs editor\Script.cs
+    "/resource:zout\zor.cmd,engine.cmd" "/resource:levels\library.zlp,library.zlp" `
+    editor\Program.cs editor\Pack.cs editor\MainForm.cs editor\Script.cs editor\Convert.cs editor\Behaviour.cs
 if ($LASTEXITCODE -ne 0) { throw "csc failed" }
 
 # Default game files from the default level pack

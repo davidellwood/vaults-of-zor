@@ -1,65 +1,72 @@
-// ZorEdit - MainForm.cs: the editor window.
+﻿// ZorEdit - MainForm.cs: the editor window.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Windows.Forms;
 
 namespace ZorEdit
 {
     public class MainForm : Form
     {
+        enum Tool { Select, Wall, Floor, Start, Object }
+
         Pack pack;
         string path;
         bool dirty, loading;
-        Cell tool = Cell.Wall;
-        bool selecting, picking;            // Select tool active / choosing a target cell
+        Tool tool = Tool.Wall;
+        string toolType;                    // object type painted by Tool.Object
+        bool picking;                       // choosing the target (P1,P2) of the selected object
         int selX = -1, selY = -1;           // selected cell
+        Inst selObj;                        // selected object
         readonly Random rng = new Random();
 
         ListBox levelList;
         MapCanvas canvas;
-        TextBox tName, tIntro, tBanner1, tBanner2, tSub, tLine1, tLine2, tLine3, tVictory;
-        TextBox[] tNames = new TextBox[11];
-        NumericUpDown nGuardHp, nStartHp, nMaxHp, nHeal, nHit, nGuardHit, nGoldMin, nGoldMax;
-        ComboBox cFacing;
-        Label introPreview, toolLabel;
-        PictureBox titlePic;
+        ToolStrip tools;
+        Label toolLabel;
         ToolStripStatusLabel sCell, sInfo;
-        ToolStripButton selectButton;
-        Dictionary<Cell, ToolStripButton> toolButtons = new Dictionary<Cell, ToolStripButton>();
-        // selected-cell settings panel
-        GroupBox gCell;
-        Label lCellTitle, lCellHint, lPText;
-        Label[] lP = new Label[4];
-        NumericUpDown[] nP = new NumericUpDown[4];
-        TextBox tPText, tPText2;
-        Label lPText2;
-        Button bTarget;
-        TextBox tScript;
+        readonly List<ToolStripButton> fixedButtons = new List<ToolStripButton>();
+        readonly List<ToolStripItem> typeButtons = new List<ToolStripItem>();
+        // level tab
+        TextBox tName, tIntro;
+        ComboBox cFacing;
+        Label introPreview;
+        // selected object
+        GroupBox gObj;
+        Label lCell, lObjType;
+        ComboBox cObjs;
+        TextBox tOName, tOText1, tOText2, tOText3;
+        BehaviourList oBeh, tBeh, lBeh, pBeh;   // behaviours: placed object, object type, level, pack
+        CheckBox chOValue;
+        NumericUpDown nOValue, nOP1, nOP2, nOX, nOY;
+        Button bTarget, bRemove;
+        // objects tab
+        ListBox typeList;
+        TextBox tTId, tTName, tTNouns, tTDesc, tTSymbol;
+        ComboBox cTLook;
+        CheckBox chSolid, chCarry, chKeep;
+        NumericUpDown nTValue;
+        Label lTypeUse;
+        // game, title, scripts
+        TextBox tVictory, tStatus, tStatusLabel, tBanner1, tBanner2, tSub, tLine1, tLine2, tLine3;
+        NumericUpDown nStartHp, nMaxHp;
+        PictureBox titlePic;
         Label lScriptResult;
-
-        static readonly Cell[] Palette = { Cell.Wall, Cell.Floor, Cell.Door, Cell.Ladder, Cell.Guard,
-                                           Cell.Key, Cell.Sword, Cell.Potion, Cell.Gold, Cell.Amulet,
-                                           Cell.Sign, Cell.Trap, Cell.Teleport, Cell.Fountain, Cell.Plate, Cell.Secret, Cell.Npc };
-        static readonly string[] PaletteNames = { "Wall", "Floor", "Door", "Ladder (start/exit)", "Guardian",
-                                                  "Key", "Sword", "Potion", "Gold", "Amulet",
-                                                  "Sign", "Trap", "Teleporter", "Fountain", "Pressure plate", "Secret wall", "Character (NPC)" };
-        static readonly string[] PaletteKeys = { "1", "2", "3", "4", "5", "6", "7", "8", "9", "0",
-                                                 "Shift+1", "Shift+2", "Shift+3", "Shift+4", "Shift+5", "Shift+6", "Shift+7" };
 
         public MainForm(string open)
         {
             Text = "ZorEdit";
-            ClientSize = new Size(1290, 720);
-            MinimumSize = new Size(1100, 700);
+            ClientSize = new Size(1320, 760);
+            MinimumSize = new Size(1150, 720);
             Font = new Font("Segoe UI", 9f);
             KeyPreview = true;
             BuildUi();
             if (open != null && File.Exists(open)) OpenFile(open);
-            else NewPack(true);
+            else NewPack();
         }
 
         Level Cur { get { int i = levelList.SelectedIndex; return i >= 0 && i < pack.Levels.Count ? pack.Levels[i] : pack.Levels[0]; } }
@@ -69,7 +76,7 @@ namespace ZorEdit
         {
             MenuStrip menu = new MenuStrip();
             ToolStripMenuItem file = new ToolStripMenuItem("&File");
-            file.DropDownItems.Add(Item("&New Pack", Keys.Control | Keys.N, (s, e) => { if (ConfirmLose()) NewPack(false); }));
+            file.DropDownItems.Add(Item("&New Pack", Keys.Control | Keys.N, (s, e) => { if (ConfirmLose()) NewPack(); }));
             file.DropDownItems.Add(Item("&Open Pack...", Keys.Control | Keys.O, (s, e) => OpenDialog()));
             file.DropDownItems.Add(Item("&Save", Keys.Control | Keys.S, (s, e) => Save(false)));
             file.DropDownItems.Add(Item("Save &As...", Keys.None, (s, e) => Save(true)));
@@ -80,7 +87,7 @@ namespace ZorEdit
             file.DropDownItems.Add(new ToolStripSeparator());
             file.DropDownItems.Add(Item("E&xit", Keys.None, (s, e) => Close()));
             ToolStripMenuItem lev = new ToolStripMenuItem("&Level");
-            lev.DropDownItems.Add(Item("&Add Level", Keys.None, (s, e) => AddLevel(new Level())));
+            lev.DropDownItems.Add(Item("&Add Level", Keys.None, (s, e) => AddLevel(BlankLevel())));
             lev.DropDownItems.Add(Item("&Duplicate Level", Keys.None, (s, e) => AddLevel(Cur.Clone())));
             lev.DropDownItems.Add(Item("De&lete Level", Keys.None, (s, e) => DeleteLevel()));
             lev.DropDownItems.Add(Item("Move &Up", Keys.None, (s, e) => MoveLevel(-1)));
@@ -99,66 +106,48 @@ namespace ZorEdit
             help.DropDownItems.Add(Item("&Script Reference", Keys.Shift | Keys.F1, (s, e) => ShowScriptHelp()));
             menu.Items.AddRange(new ToolStripItem[] { file, lev, test, help });
 
-            ToolStrip tools = new ToolStrip();
-            tools.GripStyle = ToolStripGripStyle.Hidden;
-            tools.ImageScalingSize = new Size(24, 24);
-            selectButton = new ToolStripButton("Select", MapCanvas.SelectIcon());
-            selectButton.TextImageRelation = TextImageRelation.ImageBeforeText;
-            selectButton.ToolTipText = "Select a cell to edit its settings  (Esc)";
-            selectButton.Click += (s, e) => SetSelect();
-            tools.Items.Add(selectButton);
+            tools = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, ImageScalingSize = new Size(24, 24) };
+            AddFixed("Select", MapCanvas.SelectIcon(), "Select a cell to edit its objects  (Esc)", Tool.Select);
             tools.Items.Add(new ToolStripSeparator());
-            for (int i = 0; i < Palette.Length; i++)
-            {
-                Cell c = Palette[i];
-                ToolStripButton b = new ToolStripButton("", MapCanvas.Swatch(c));
-                b.DisplayStyle = ToolStripItemDisplayStyle.Image;
-                b.ToolTipText = PaletteNames[i] + "  (key " + PaletteKeys[i] + ")";
-                b.Click += (s, e) => SetTool(c);
-                toolButtons[c] = b;
-                tools.Items.Add(b);
-                if (i == 9) tools.Items.Add(new ToolStripSeparator());
-            }
+            AddFixed("", MapCanvas.TerrainSwatch(true), "Wall  (key 1)", Tool.Wall);
+            AddFixed("", MapCanvas.TerrainSwatch(false), "Floor  (key 2)", Tool.Floor);
+            AddFixed("", MapCanvas.StartSwatch(), "Start position: click to place, click it again to turn  (key 3)", Tool.Start);
             tools.Items.Add(new ToolStripSeparator());
             toolLabel = new Label { AutoSize = true, BackColor = Color.Transparent, Padding = new Padding(0, 4, 0, 0) };
-            tools.Items.Add(new ToolStripControlHost(toolLabel));
 
             StatusStrip status = new StatusStrip();
-            sCell = new ToolStripStatusLabel("") { Width = 260, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft };
+            sCell = new ToolStripStatusLabel("") { Width = 380, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft };
             sInfo = new ToolStripStatusLabel("") { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
             status.Items.Add(sCell);
             status.Items.Add(sInfo);
 
-            // left: level list
-            Panel left = new Panel { Dock = DockStyle.Left, Width = 200, Padding = new Padding(6) };
+            Panel left = new Panel { Dock = DockStyle.Left, Width = 190, Padding = new Padding(6) };
             Label ll = new Label { Text = "Levels (played in order)", Dock = DockStyle.Top, Height = 20 };
             levelList = new ListBox { Dock = DockStyle.Fill, IntegralHeight = false };
             levelList.SelectedIndexChanged += (s, e) => ShowLevel();
             FlowLayoutPanel lb = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 100 };
-            lb.Controls.Add(Btn("Add", 58, (s, e) => AddLevel(new Level())));
-            lb.Controls.Add(Btn("Copy", 58, (s, e) => AddLevel(Cur.Clone())));
-            lb.Controls.Add(Btn("Delete", 58, (s, e) => DeleteLevel()));
-            lb.Controls.Add(Btn("Up", 58, (s, e) => MoveLevel(-1)));
-            lb.Controls.Add(Btn("Down", 58, (s, e) => MoveLevel(1)));
-            lb.Controls.Add(Btn("Maze", 58, (s, e) => GenerateMaze()));
+            lb.Controls.Add(Btn("Add", 54, (s, e) => AddLevel(BlankLevel())));
+            lb.Controls.Add(Btn("Copy", 54, (s, e) => AddLevel(Cur.Clone())));
+            lb.Controls.Add(Btn("Delete", 54, (s, e) => DeleteLevel()));
+            lb.Controls.Add(Btn("Up", 54, (s, e) => MoveLevel(-1)));
+            lb.Controls.Add(Btn("Down", 54, (s, e) => MoveLevel(1)));
+            lb.Controls.Add(Btn("Maze", 54, (s, e) => GenerateMaze()));
             left.Controls.Add(levelList);
             left.Controls.Add(lb);
             left.Controls.Add(ll);
 
-            // right: properties
-            TabControl tabs = new TabControl { Dock = DockStyle.Right, Width = 380 };
+            TabControl tabs = new TabControl { Dock = DockStyle.Right, Width = 420 };
             tabs.TabPages.Add(LevelTab());
+            tabs.TabPages.Add(ObjectsTab());
+            tabs.TabPages.Add(ScriptTab());
             tabs.TabPages.Add(GameTab());
             tabs.TabPages.Add(TitleTab());
-            tabs.TabPages.Add(ScriptTab());
             tabs.SelectedIndexChanged += (s, e) => RefreshTitle();
 
-            // centre: map
             Panel mid = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = Color.FromArgb(24, 24, 28) };
             canvas = new MapCanvas { Location = new Point(10, 10) };
-            canvas.Painted += (x, y, erase) => PaintCell(x, y, erase);
-            canvas.Hover += (x, y) => sCell.Text = x < 0 ? "" : "Cell " + x + "," + y + "  " + CellName(Cur.Map[y, x]) +
-                string.Concat(canvas.ScriptItems.Where(it => it.Key.X == x && it.Key.Y == y).Select(it => "  + " + it.Value));
+            canvas.Painted += PaintCell;
+            canvas.Hover += (x, y) => sCell.Text = x < 0 ? "" : CellText(x, y);
             mid.Controls.Add(canvas);
 
             Controls.Add(mid);
@@ -168,164 +157,220 @@ namespace ZorEdit
             Controls.Add(menu);
             Controls.Add(status);
             MainMenuStrip = menu;
-            SetTool(Cell.Wall);
+        }
+
+        void AddFixed(string text, Image img, string tip, Tool t)
+        {
+            ToolStripButton b = new ToolStripButton(text, img) { ToolTipText = tip, Tag = t };
+            b.DisplayStyle = text.Length > 0 ? ToolStripItemDisplayStyle.ImageAndText : ToolStripItemDisplayStyle.Image;
+            b.Click += (s, e) => SetTool(t, null);
+            fixedButtons.Add(b);
+            tools.Items.Add(b);
+        }
+
+        /// One palette button per object type.
+        void RebuildPalette()
+        {
+            foreach (ToolStripItem b in typeButtons) tools.Items.Remove(b);
+            typeButtons.Clear();
+            int n = 0;
+            foreach (ObjType t in pack.Types)
+            {
+                string id = t.Id;
+                ToolStripButton b = new ToolStripButton("", MapCanvas.TypeSwatch(t)) { DisplayStyle = ToolStripItemDisplayStyle.Image, Tag = id };
+                b.ToolTipText = t.Id + ": " + t.Name + (n < 7 ? "  (key " + "4567890"[n] + ")" : "");
+                b.Click += (s, e) => SetTool(Tool.Object, id);
+                typeButtons.Add(b);
+                tools.Items.Add(b);
+                n++;
+            }
+            ToolStripControlHost host = new ToolStripControlHost(toolLabel);
+            typeButtons.Add(host);
+            tools.Items.Add(host);
+            if (tool == Tool.Object && pack.Type(toolType) == null) SetTool(Tool.Select, null);
+            else SetTool(tool, toolType);
         }
 
         TabPage LevelTab()
         {
-            TabPage p = new TabPage("Level");
+            TabPage p = new TabPage("Level") { AutoScroll = true };
             TableLayoutPanel t = Grid(p);
             tName = Box(20); Row(t, "Name", tName);
-            nGuardHp = Num(1, 50); Row(t, "Guardian hits to kill", nGuardHp);
             cFacing = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 120 };
-            cFacing.Items.AddRange(new object[] { "Auto", "North", "East", "South", "West" });
+            cFacing.Items.AddRange(new object[] { "North", "East", "South", "West" });
             Row(t, "Start facing", cFacing);
-            tIntro = new TextBox { Multiline = true, Height = 110, Dock = DockStyle.Fill, ScrollBars = ScrollBars.Vertical, CharacterCasing = CharacterCasing.Upper };
+            tIntro = new TextBox { Multiline = true, Height = 80, Dock = DockStyle.Fill, ScrollBars = ScrollBars.Vertical, CharacterCasing = CharacterCasing.Upper };
             Row(t, "Intro text (| = new line)", tIntro);
             introPreview = new Label { AutoSize = true, Font = new Font("Consolas", 9f), BackColor = Color.Black, ForeColor = Color.FromArgb(210, 215, 255), Padding = new Padding(4), MinimumSize = new Size(250, 20) };
             Row(t, "As shown in the game", introPreview);
-            Button chk = Btn("Check pack (F7)", 140, (s, e) => CheckPack(true));
-            Row(t, "", chk);
-            tName.TextChanged += Changed; tIntro.TextChanged += Changed;
-            nGuardHp.ValueChanged += Changed; cFacing.SelectedIndexChanged += Changed;
-            p.AutoScroll = true;
+            tName.TextChanged += LevelChanged; tIntro.TextChanged += LevelChanged; cFacing.SelectedIndexChanged += LevelChanged;
 
-            // settings of the selected cell
-            gCell = new GroupBox { Text = "Selected cell", Width = 340, Height = 420 };
+            gObj = new GroupBox { Text = "Selected object", Width = 385, Height = 640 };
             TableLayoutPanel c = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, AutoSize = true, Padding = new Padding(4) };
-            lCellTitle = new Label { AutoSize = true, Font = new Font("Segoe UI", 9f, FontStyle.Bold) };
-            c.Controls.Add(lCellTitle);
-            for (int i = 0; i < 4; i++)
+            lCell = new Label { AutoSize = true, Font = new Font("Segoe UI", 9f, FontStyle.Bold) };
+            c.Controls.Add(lCell);
+            cObjs = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 360 };
+            cObjs.SelectedIndexChanged += (s, e) => { if (!loading && cObjs.SelectedItem is ObjItem) SelectObj(((ObjItem)cObjs.SelectedItem).O); };
+            c.Controls.Add(cObjs);
+            lObjType = new Label { AutoSize = true, MaximumSize = new Size(360, 0), ForeColor = Color.DimGray };
+            c.Controls.Add(lObjType);
+            FlowLayoutPanel where = new FlowLayoutPanel { AutoSize = true, WrapContents = false };
+            where.Controls.Add(new Label { Text = "X", AutoSize = true, Padding = new Padding(0, 6, 0, 0) });
+            nOX = Num(0, Level.W - 2); nOX.Width = 50; where.Controls.Add(nOX);
+            where.Controls.Add(new Label { Text = "Y", AutoSize = true, Padding = new Padding(0, 6, 0, 0) });
+            nOY = Num(0, Level.H - 2); nOY.Width = 50; where.Controls.Add(nOY);
+            where.Controls.Add(new Label { Text = "(0,0 nowhere yet, 0,1 carried)", AutoSize = true, Padding = new Padding(0, 6, 0, 0), ForeColor = Color.DimGray });
+            c.Controls.Add(where);
+            FlowLayoutPanel vals = new FlowLayoutPanel { AutoSize = true, WrapContents = false };
+            chOValue = new CheckBox { Text = "Own value", AutoSize = true };
+            vals.Controls.Add(chOValue);
+            nOValue = Num(0, 255); nOValue.Width = 55; vals.Controls.Add(nOValue);
+            vals.Controls.Add(new Label { Text = "P1", AutoSize = true, Padding = new Padding(6, 6, 0, 0) });
+            nOP1 = Num(0, 255); nOP1.Width = 50; vals.Controls.Add(nOP1);
+            vals.Controls.Add(new Label { Text = "P2", AutoSize = true, Padding = new Padding(0, 6, 0, 0) });
+            nOP2 = Num(0, 255); nOP2.Width = 50; vals.Controls.Add(nOP2);
+            c.Controls.Add(vals);
+            FlowLayoutPanel bt = new FlowLayoutPanel { AutoSize = true, WrapContents = false };
+            bTarget = Btn("Pick P1,P2 as target on map", 180, (s, e) => { if (selObj != null) { picking = true; lObjType.Text = "Click the target cell on the map (Esc cancels)."; } });
+            bRemove = Btn("Remove object", 110, (s, e) => RemoveSelected());
+            bt.Controls.Add(bTarget); bt.Controls.Add(bRemove);
+            c.Controls.Add(bt);
+            c.Controls.Add(new Label { Text = "Object name (so level rules can refer to it)", AutoSize = true });
+            tOName = new TextBox { Width = 160 };
+            c.Controls.Add(tOName);
+            c.Controls.Add(new Label { Text = "Description (blank = the object type's)", AutoSize = true });
+            tOText1 = TextArea(360, 40); c.Controls.Add(tOText1);
+            c.Controls.Add(new Label { Text = "Text 2 (say this 2 / speak this 2)", AutoSize = true });
+            tOText2 = TextArea(360, 40); c.Controls.Add(tOText2);
+            c.Controls.Add(new Label { Text = "Text 3", AutoSize = true });
+            tOText3 = TextArea(360, 40); c.Controls.Add(tOText3);
+            c.Controls.Add(new Label { Text = "This object's own behaviours (tried before its kind's)", AutoSize = true });
+            oBeh = new BehaviourList { Width = 360, Height = 130 };
+            oBeh.Context = ObjContext;
+            oBeh.NewRule = "on arrive then say \"\"";
+            oBeh.ScriptChanged += (s, e) => { if (loading || selObj == null) return; selObj.Script = oBeh.Script; canvas.Invalidate(); MarkDirty(); UpdateInfo(); };
+            c.Controls.Add(oBeh);
+            gObj.Controls.Add(c);
+            Row(t, "", gObj);
+            foreach (Control k in new Control[] { nOX, nOY, chOValue, nOValue, nOP1, nOP2, tOName, tOText1, tOText2, tOText3 })
             {
-                lP[i] = new Label { AutoSize = true, Margin = new Padding(0, 4, 0, 0) };
-                nP[i] = Num(0, 255);
-                nP[i].ValueChanged += ParamChanged;
-                c.Controls.Add(lP[i]);
-                c.Controls.Add(nP[i]);
+                if (k is NumericUpDown) ((NumericUpDown)k).ValueChanged += ObjChanged;
+                else if (k is CheckBox) ((CheckBox)k).CheckedChanged += ObjChanged;
+                else k.TextChanged += ObjChanged;
             }
-            bTarget = Btn("Pick target on map", 150, (s, e) => { picking = true; lCellHint.Text = "Click the target cell on the map (Esc cancels)."; });
-            c.Controls.Add(bTarget);
-            lPText = new Label { AutoSize = true, Margin = new Padding(0, 4, 0, 0) };
-            tPText = new TextBox { Multiline = true, Width = 320, Height = 54, ScrollBars = ScrollBars.Vertical, CharacterCasing = CharacterCasing.Upper };
-            tPText.TextChanged += ParamChanged;
-            c.Controls.Add(lPText);
-            c.Controls.Add(tPText);
-            lPText2 = new Label { AutoSize = true, Margin = new Padding(0, 4, 0, 0) };
-            tPText2 = new TextBox { Multiline = true, Width = 320, Height = 54, ScrollBars = ScrollBars.Vertical, CharacterCasing = CharacterCasing.Upper };
-            tPText2.TextChanged += ParamChanged;
-            c.Controls.Add(lPText2);
-            c.Controls.Add(tPText2);
-            lCellHint = new Label { AutoSize = true, MaximumSize = new Size(320, 0), ForeColor = Color.DimGray, Margin = new Padding(0, 4, 0, 0) };
-            c.Controls.Add(lCellHint);
-            gCell.Controls.Add(c);
-            Row(t, "", gCell);
-            ShowCellPanel();
             return p;
         }
 
-        TabPage GameTab()
+        class ObjItem
         {
-            TabPage p = new TabPage("Game");
-            p.AutoScroll = true;
-            TableLayoutPanel t = Grid(p);
-            tVictory = new TextBox { Multiline = true, Height = 60, Dock = DockStyle.Fill, CharacterCasing = CharacterCasing.Upper };
-            Row(t, "Victory text (after the last level)", tVictory);
-            nStartHp = Num(1, 99); Row(t, "Starting HP", nStartHp);
-            nMaxHp = Num(1, 99); Row(t, "Maximum HP", nMaxHp);
-            nHeal = Num(0, 99); Row(t, "Potion heals", nHeal);
-            nHit = Num(0, 100); Row(t, "Sword hit chance %", nHit);
-            nGuardHit = Num(0, 100); Row(t, "Guardian attack chance %", nGuardHit);
-            nGoldMin = Num(0, 200); Row(t, "Gold per pile, min", nGoldMin);
-            nGoldMax = Num(0, 255); Row(t, "Gold per pile, max", nGoldMax);
-            for (int i = 0; i < 11; i++) { tNames[i] = Box(18); Row(t, "Name: " + Pack.NameLabels[i].ToLowerInvariant(), tNames[i]); tNames[i].TextChanged += Changed; }
-            tVictory.TextChanged += Changed;
-            foreach (NumericUpDown n in new[] { nStartHp, nMaxHp, nHeal, nHit, nGuardHit, nGoldMin, nGoldMax }) n.ValueChanged += Changed;
+            public Inst O; public string S;
+            public override string ToString() { return S; }
+        }
+
+        TabPage ObjectsTab()
+        {
+            TabPage p = new TabPage("Objects");
+            Panel top = new Panel { Dock = DockStyle.Top, Height = 170, Padding = new Padding(6) };
+            typeList = new ListBox { Dock = DockStyle.Fill, IntegralHeight = false };
+            typeList.SelectedIndexChanged += (s, e) => ShowType();
+            FlowLayoutPanel tb = new FlowLayoutPanel { Dock = DockStyle.Right, Width = 90, FlowDirection = FlowDirection.TopDown };
+            tb.Controls.Add(Btn("New", 80, (s, e) => NewType(null)));
+            tb.Controls.Add(Btn("Copy", 80, (s, e) => NewType(SelType())));
+            tb.Controls.Add(Btn("Delete", 80, (s, e) => DeleteType()));
+            tb.Controls.Add(Btn("Up", 80, (s, e) => MoveType(-1)));
+            tb.Controls.Add(Btn("Down", 80, (s, e) => MoveType(1)));
+            tb.Controls.Add(Btn("Library...", 80, (s, e) => AddFromLibrary()));
+            top.Height = 200;
+            top.Controls.Add(typeList);
+            top.Controls.Add(tb);
+            Panel body = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+            TableLayoutPanel t = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1, Padding = new Padding(6) };
+            body.Controls.Add(t);
+            tTId = new TextBox { Width = 160 }; Row(t, "Id (one word, used in scripts)", tTId);
+            tTName = Box(24); Row(t, "Name (shown in messages and the inventory)", tTName);
+            FlowLayoutPanel lk = new FlowLayoutPanel { AutoSize = true, WrapContents = false };
+            cTLook = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 120 };
+            cTLook.Items.AddRange(ObjType.LookNames);
+            lk.Controls.Add(cTLook);
+            lk.Controls.Add(new Label { Text = "Map symbol", AutoSize = true, Padding = new Padding(8, 6, 0, 0) });
+            tTSymbol = new TextBox { Width = 24, MaxLength = 1 };
+            lk.Controls.Add(tTSymbol);
+            Row(t, "Looks like", lk);
+            FlowLayoutPanel fl = new FlowLayoutPanel { AutoSize = true, WrapContents = false };
+            chSolid = new CheckBox { Text = "Solid (blocks the way)", AutoSize = true };
+            chCarry = new CheckBox { Text = "Can be carried", AutoSize = true };
+            chKeep = new CheckBox { Text = "Kept on next level", AutoSize = true };
+            fl.Controls.Add(chSolid); fl.Controls.Add(chCarry); fl.Controls.Add(chKeep);
+            Row(t, "", fl);
+            tTNouns = new TextBox { CharacterCasing = CharacterCasing.Upper }; Row(t, "Nouns the player can type (comma separated)", tTNouns);
+            nTValue = Num(0, 255); Row(t, "Starting value (hit points, uses, amount...)", nTValue);
+            tTDesc = TextArea(380, 44); Row(t, "Description (LOOK)", tTDesc);
+            tBeh = new BehaviourList { Width = 380, Height = 220 };
+            tBeh.Context = TypeContext;
+            tBeh.NewRule = null;
+            tBeh.ScriptChanged += (s, e) => { if (loading) return; ObjType ty = SelType(); if (ty == null) return; ty.Script = tBeh.Script; canvas.Invalidate(); MarkDirty(); UpdateInfo(); };
+            Row(t, "Behaviours of every object of this kind (\"this\" = the placed object)", tBeh);
+            lTypeUse = new Label { AutoSize = true, MaximumSize = new Size(380, 0), ForeColor = Color.DimGray };
+            Row(t, "", lTypeUse);
+            foreach (Control k in new Control[] { tTId, tTName, tTSymbol, tTNouns, tTDesc }) k.TextChanged += TypeChanged;
+            foreach (CheckBox k in new[] { chSolid, chCarry, chKeep }) k.CheckedChanged += TypeChanged;
+            nTValue.ValueChanged += TypeChanged;
+            cTLook.SelectedIndexChanged += TypeChanged;
+            p.Controls.Add(body);
+            p.Controls.Add(top);
             return p;
         }
 
         TabPage ScriptTab()
         {
-            TabPage p = new TabPage("Script");
-            Label head = new Label
-            {
-                Dock = DockStyle.Top, Height = 34, Padding = new Padding(4),
-                Text = "Rules for this level, Scott Adams style: items, verbs, flags, counters. Help > Script Reference."
-            };
-            tScript = new TextBox
-            {
-                Dock = DockStyle.Fill, Multiline = true, ScrollBars = ScrollBars.Both, WordWrap = false,
-                AcceptsTab = true, Font = new Font("Consolas", 9f), CharacterCasing = CharacterCasing.Normal
-            };
-            tScript.TextChanged += (s, e) =>
-            {
-                if (loading) return;
-                Cur.Script = tScript.Text.Replace("\r\n", "\n");
-                canvas.ScriptItems = ScriptCompiler.ItemPositions(Cur.Script);
-                MarkDirty();
-            };
+            TabPage p = new TabPage("Scripts");
+            SplitContainer sp = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 330 };
+            lBeh = new BehaviourList { Dock = DockStyle.Fill };
+            lBeh.Context = () => new BehaviourContext { Pack = pack, Level = Cur, Title = "level " + Cur.Name };
+            lBeh.NewRule = "on arrive if at 1,1 then say \"\"";
+            pBeh = new BehaviourList { Dock = DockStyle.Fill };
+            pBeh.Context = () => new BehaviourContext { Pack = pack, Title = "every level" };
+            sp.Panel1.Controls.Add(lBeh);
+            sp.Panel1.Controls.Add(new Label { Dock = DockStyle.Top, Height = 20, Text = "This level's behaviours (cells, named objects; right-click a cell too):" });
+            sp.Panel2.Controls.Add(pBeh);
+            sp.Panel2.Controls.Add(new Label { Dock = DockStyle.Top, Height = 20, Text = "Behaviours on every level (synonyms go here):" });
+            lBeh.ScriptChanged += (s, e) => { if (loading) return; Cur.Script = lBeh.Script; canvas.Invalidate(); MarkDirty(); UpdateInfo(); };
+            pBeh.ScriptChanged += (s, e) => { if (loading) return; pack.Script = pBeh.Script; MarkDirty(); UpdateInfo(); };
             FlowLayoutPanel bottom = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 110, FlowDirection = FlowDirection.TopDown, WrapContents = false };
-            FlowLayoutPanel buttons = new FlowLayoutPanel { Height = 30, Width = 360 };
-            buttons.Controls.Add(Btn("Check script", 100, (s, e) => CheckScript()));
+            FlowLayoutPanel buttons = new FlowLayoutPanel { Height = 30, Width = 400 };
+            buttons.Controls.Add(Btn("Check scripts", 100, (s, e) => CheckScript()));
             buttons.Controls.Add(Btn("Reference", 90, (s, e) => ShowScriptHelp()));
-            buttons.Controls.Add(Btn("Example", 80, (s, e) => InsertExample()));
-            lScriptResult = new Label { AutoSize = true, MaximumSize = new Size(360, 0), ForeColor = Color.DarkGreen };
+            lScriptResult = new Label { AutoSize = true, MaximumSize = new Size(400, 0), ForeColor = Color.DarkGreen };
             bottom.Controls.Add(buttons);
             bottom.Controls.Add(lScriptResult);
-            p.Controls.Add(tScript);
+            p.Controls.Add(sp);
             p.Controls.Add(bottom);
-            p.Controls.Add(head);
             return p;
         }
 
-        void CheckScript()
+        static TextBox ScriptBox()
         {
-            List<string> errs = Checker.CheckScripts(pack);
-            lScriptResult.ForeColor = errs.Count == 0 ? Color.DarkGreen : Color.DarkRed;
-            lScriptResult.Text = errs.Count == 0 ? "All scripts compile." : string.Join("\n", errs.Take(6).Select(e => e.Substring(6)));
+            return new TextBox { Dock = DockStyle.Fill, Multiline = true, ScrollBars = ScrollBars.Both, WordWrap = false, AcceptsTab = true, Font = new Font("Consolas", 9f) };
         }
 
-        void InsertExample()
+        TabPage GameTab()
         {
-            if (tScript.Text.Trim().Length > 0 && MessageBox.Show(this, "Add the example to the end of this level's script?", "Script", MessageBoxButtons.OKCancel) != DialogResult.OK) return;
-            int lx, ly;
-            Cur.FindLadder(out lx, out ly);
-            string ex = "# Example: a lantern that can be lit, and a hidden reward\r\n" +
-                "item lamp \"A DUSTY LANTERN\" at " + lx + "," + ly + " nouns LANTERN,LAMP desc \"AN OLD LANTERN. IT IS NOT LIT.\"\r\n" +
-                "item litlamp \"A LIT LANTERN\" nowhere nouns LANTERN,LAMP desc \"IT BURNS BRIGHTLY.\"\r\n" +
-                "synonym IGNITE = LIGHT\r\n" +
-                "on LIGHT LAMP if carried lamp then swap lamp litlamp; say \"THE LANTERN GLOWS.\"; score 10\r\n" +
-                "on LIGHT LAMP if present litlamp then say \"IT IS ALREADY LIT.\"\r\n" +
-                "on LIGHT any then say \"YOU HAVE NOTHING TO LIGHT.\"\r\n";
-            tScript.AppendText((tScript.Text.Length > 0 && !tScript.Text.EndsWith("\n") ? "\r\n" : "") + ex);
-        }
-
-        void ShowScriptHelp()
-        {
-            Info("LEVEL SCRIPTS  (one statement per line; # comment; a line starting with a space continues the last)\n\n" +
-                 "item NAME \"TITLE\" at X,Y | carried | nowhere  [fixed]  [nouns WORD,WORD]  [desc \"TEXT\"]\n" +
-                 "synonym NEWWORD = WORD\n" +
-                 "on VERB [NOUN | any] [if CONDITION and ...] then ACTION; ACTION...\n" +
-                 "every turn [if ...] then ...        on arrive [if ...] then ...\n\n" +
-                 "The first 'on' rule whose conditions hold acts, and the command stops there (unless it says continue). " +
-                 "Rules may use built-in verbs (TAKE, OPEN, LOOK...) to change what they do. All 'every turn' and 'on arrive' rules that hold act.\n\n" +
-                 "CONDITIONS (put 'not' in front to reverse):\n" +
-                 "  carried ITEM   here ITEM   present ITEM   exists ITEM   at X,Y   ahead X,Y\n" +
-                 "  flag NAME   counter NAME >= N  (> < <=)   chance PERCENT   facing CELL\n" +
-                 "  has sword | amulet | key0-key3 | potion | gold N\n\n" +
-                 "ACTIONS:\n" +
-                 "  say \"TEXT\"   speak \"TEXT\" (words fly from the character in front)   die \"TEXT\"\n" +
-                 "  set FLAG   clear FLAG   counter NAME = N   add NAME N   sub NAME N\n" +
-                 "  get ITEM   drop ITEM   destroy ITEM   put ITEM at X,Y   swap ITEM ITEM\n" +
-                 "  cell X,Y CELL   goto X,Y   score N   hurt N   heal N (0 = fully)\n" +
-                 "  give WHAT [N]   take WHAT [N]   win   inventory   look   continue\n\n" +
-                 "CELL: floor wall door ladder guardian key sword potion gold amulet sign trap teleporter fountain plate secret hermit merchant ghost\n\n" +
-                 "Items can be picked up with TAKE/GET, put down with DROP and looked at with LOOK/EXAMINE. " +
-                 "Flags (32), counters (8) and words are shared by all levels of the pack.");
+            TabPage p = new TabPage("Game") { AutoScroll = true };
+            TableLayoutPanel t = Grid(p);
+            tVictory = new TextBox { Multiline = true, Height = 60, Dock = DockStyle.Fill, CharacterCasing = CharacterCasing.Upper };
+            Row(t, "Victory text (after the last level)", tVictory);
+            nStartHp = Num(1, 99); Row(t, "Starting HP", nStartHp);
+            nMaxHp = Num(1, 99); Row(t, "Maximum HP", nMaxHp);
+            tStatus = new TextBox { Width = 120 }; Row(t, "Counter shown on the status line (blank = none)", tStatus);
+            tStatusLabel = new TextBox { Width = 40, MaxLength = 2, CharacterCasing = CharacterCasing.Upper }; Row(t, "Its label (2 characters)", tStatusLabel);
+            tVictory.TextChanged += PackChanged; tStatus.TextChanged += PackChanged; tStatusLabel.TextChanged += PackChanged;
+            nStartHp.ValueChanged += PackChanged; nMaxHp.ValueChanged += PackChanged;
+            return p;
         }
 
         TabPage TitleTab()
         {
-            TabPage p = new TabPage("Title Screen");
+            TabPage p = new TabPage("Title");
             TableLayoutPanel t = Grid(p);
             tBanner1 = Box(10); Row(t, "Banner line 1 (big)", tBanner1);
             tBanner2 = Box(10); Row(t, "Banner line 2 (big)", tBanner2);
@@ -333,9 +378,9 @@ namespace ZorEdit
             tLine1 = Box(63); Row(t, "Text line 1", tLine1);
             tLine2 = Box(63); Row(t, "Text line 2", tLine2);
             tLine3 = Box(63); Row(t, "Text line 3", tLine3);
-            titlePic = new PictureBox { Width = 352, Height = 200, BackColor = Color.Black, SizeMode = PictureBoxSizeMode.Zoom };
+            titlePic = new PictureBox { Width = 384, Height = 192, BackColor = Color.Black, SizeMode = PictureBoxSizeMode.Zoom };
             Row(t, "Preview", titlePic);
-            foreach (TextBox b in new[] { tBanner1, tBanner2, tSub, tLine1, tLine2, tLine3 }) b.TextChanged += Changed;
+            foreach (TextBox b in new[] { tBanner1, tBanner2, tSub, tLine1, tLine2, tLine3 }) b.TextChanged += PackChanged;
             return p;
         }
 
@@ -350,11 +395,12 @@ namespace ZorEdit
         static void Row(TableLayoutPanel t, string label, Control c)
         {
             if (label.Length > 0) t.Controls.Add(new Label { Text = label, AutoSize = true, Margin = new Padding(0, 6, 0, 0) });
-            if (c is TextBox && !((TextBox)c).Multiline) c.Width = 330;
+            if (c is TextBox && !((TextBox)c).Multiline && c.Width == 100) c.Width = 370;
             t.Controls.Add(c);
         }
 
         static TextBox Box(int max) { return new TextBox { MaxLength = max, CharacterCasing = CharacterCasing.Upper }; }
+        static TextBox TextArea(int w, int h) { return new TextBox { Multiline = true, Width = w, Height = h, ScrollBars = ScrollBars.Vertical, CharacterCasing = CharacterCasing.Upper }; }
         static NumericUpDown Num(int lo, int hi) { return new NumericUpDown { Minimum = lo, Maximum = hi, Width = 80 }; }
         static Button Btn(string text, int w, EventHandler h) { Button b = new Button { Text = text, Width = w }; b.Click += h; return b; }
         static ToolStripMenuItem Item(string text, Keys keys, EventHandler h)
@@ -365,13 +411,19 @@ namespace ZorEdit
         }
 
         // ================================================================ model <-> UI
-        void NewPack(bool sample)
+        static Level BlankLevel()
         {
-            string def = Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "levels", "default.zlp");
-            if (sample && File.Exists(def)) { OpenFile(def); path = null; dirty = false; UpdateTitle(); return; }
+            Level l = new Level { Name = "NEW LEVEL" };
+            for (int y = 0; y < Level.H; y++)
+                for (int x = 0; x < Level.W; x++)
+                    l.Wall[y, x] = Level.IsBorder(x, y);
+            return l;
+        }
+
+        void NewPack()
+        {
             pack = new Pack();
-            pack.Line1 = "RECOVER THE AMULET AND CLIMB BACK OUT";
-            pack.Levels.Add(MazeGen.Generate(rng, new Level { Name = "LEVEL ONE" }));
+            pack.Levels.Add(BlankLevel());
             path = null;
             LoadUi();
             dirty = false;
@@ -382,12 +434,14 @@ namespace ZorEdit
         {
             try
             {
+                bool old = !File.ReadAllLines(f).Any(l => Regex.IsMatch(l.Trim(), @"^format\s*=\s*5\b", RegexOptions.IgnoreCase));
                 pack = Zlp.Load(f);
-                path = f;
+                path = old ? null : f;
                 LoadUi();
-                dirty = false;
+                dirty = old;
                 UpdateTitle();
-                Settings.Set("last", f);
+                if (old) Info(Path.GetFileName(f) + " is an older pack. It has been converted: every kind of cell is now an object type you can change on the Objects tab, and script items are objects on the map.\n\nSave it under a new name to keep the converted version.");
+                else Settings.Set("last", f);
             }
             catch (Exception ex) { Error("Could not open " + f + "\n\n" + ex.Message); }
         }
@@ -397,13 +451,16 @@ namespace ZorEdit
             loading = true;
             tBanner1.Text = pack.Banner1; tBanner2.Text = pack.Banner2; tSub.Text = pack.Subtitle;
             tLine1.Text = pack.Line1; tLine2.Text = pack.Line2; tLine3.Text = pack.Line3;
-            tVictory.Text = pack.Victory;
-            SetNum(nStartHp, pack.StartHp); SetNum(nMaxHp, pack.MaxHp); SetNum(nHeal, pack.Heal);
-            SetNum(nHit, pack.Hit); SetNum(nGuardHit, pack.GuardHit); SetNum(nGoldMin, pack.GoldMin); SetNum(nGoldMax, pack.GoldMax);
-            for (int i = 0; i < 11; i++) tNames[i].Text = pack.Names[i];
+            tVictory.Text = pack.Victory.Replace("|", "\r\n");
+            SetNum(nStartHp, pack.StartHp); SetNum(nMaxHp, pack.MaxHp);
+            tStatus.Text = pack.StatusCounter; tStatusLabel.Text = pack.StatusLabel;
+            pBeh.Script = pack.Script;
             RefreshList(0);
+            RefreshTypes(0);
             loading = false;
+            RebuildPalette();
             ShowLevel();
+            ShowType();
             RefreshTitle();
         }
 
@@ -425,37 +482,39 @@ namespace ZorEdit
             loading = true;
             Level l = Cur;
             tName.Text = l.Name;
-            SetNum(nGuardHp, l.GuardHp);
-            cFacing.SelectedIndex = l.Facing + 1;
-            tIntro.Text = l.Intro.Replace("|", "|");
-            if (tScript != null) { tScript.Text = (l.Script ?? "").Replace("\n", "\r\n"); lScriptResult.Text = ""; }
+            cFacing.SelectedIndex = l.Facing & 3;
+            tIntro.Text = l.Intro;
+            lBeh.Script = l.Script;
+            lScriptResult.Text = "";
             loading = false;
+            canvas.Pack = pack;
             canvas.Level = l;
-            canvas.ScriptItems = ScriptCompiler.ItemPositions(l.Script);
             Select(-1, -1);
             UpdatePreview();
             UpdateInfo();
         }
 
-        void Changed(object sender, EventArgs e)
+        void LevelChanged(object sender, EventArgs e)
         {
             if (loading) return;
             Level l = Cur;
             l.Name = tName.Text;
-            l.GuardHp = (int)nGuardHp.Value;
-            l.Facing = cFacing.SelectedIndex - 1;
+            l.Facing = Math.Max(0, cFacing.SelectedIndex);
             l.Intro = tIntro.Text.Replace("\r\n", "|");
+            if (sender == tName) { int i = levelList.SelectedIndex; levelList.Items[i] = (i + 1) + ". " + l.Name; }
+            canvas.Invalidate();
+            UpdatePreview();
+            MarkDirty();
+        }
+
+        void PackChanged(object sender, EventArgs e)
+        {
+            if (loading) return;
             pack.Banner1 = tBanner1.Text; pack.Banner2 = tBanner2.Text; pack.Subtitle = tSub.Text;
             pack.Line1 = tLine1.Text; pack.Line2 = tLine2.Text; pack.Line3 = tLine3.Text;
             pack.Victory = tVictory.Text.Replace("\r\n", "|");
-            pack.StartHp = (int)nStartHp.Value; pack.MaxHp = (int)nMaxHp.Value; pack.Heal = (int)nHeal.Value;
-            pack.Hit = (int)nHit.Value; pack.GuardHit = (int)nGuardHit.Value;
-            pack.GoldMin = (int)nGoldMin.Value; pack.GoldMax = (int)nGoldMax.Value;
-            for (int i = 0; i < 11; i++) pack.Names[i] = tNames[i].Text;
-            if (Array.IndexOf(tNames, sender) >= 0) ShowCellPanel();
-            if (sender == tName) { int i = levelList.SelectedIndex; levelList.Items[i] = (i + 1) + ". " + l.Name; }
-            if (sender == cFacing) canvas.Invalidate();
-            UpdatePreview();
+            pack.StartHp = (int)nStartHp.Value; pack.MaxHp = (int)nMaxHp.Value;
+            pack.StatusCounter = tStatus.Text.Trim(); pack.StatusLabel = tStatusLabel.Text;
             RefreshTitle();
             MarkDirty();
         }
@@ -470,8 +529,7 @@ namespace ZorEdit
         void RefreshTitle()
         {
             if (pack == null || titlePic == null) return;
-            byte[] scr = Compiler.RenderTitle(pack);
-            Bitmap bmp = Trs80Screen.Render(scr, 64, 16);
+            Bitmap bmp = Trs80Screen.Render(Compiler.RenderTitle(pack), 64, 16);
             Image old = titlePic.Image;
             titlePic.Image = bmp;
             if (old != null) old.Dispose();
@@ -479,10 +537,12 @@ namespace ZorEdit
 
         void UpdateInfo()
         {
+            ScriptCompiler sc;
             try
             {
-                int size = Compiler.Build(pack).Length;
-                sInfo.Text = pack.Levels.Count + " level(s), level file " + size + " bytes.  Hover over a toolbar button to see what it paints.";
+                int size = Compiler.Build(pack, out sc).Length;
+                sInfo.Text = pack.Levels.Count + " level(s), " + pack.Types.Count + " kinds of object, level file " + size + " bytes." +
+                             (sc.Errors.Count > 0 ? "  Script problem: " + sc.Errors[0] : "");
             }
             catch (Exception ex) { sInfo.Text = ex.Message; }
         }
@@ -490,134 +550,445 @@ namespace ZorEdit
         void MarkDirty() { if (!dirty) { dirty = true; UpdateTitle(); } }
         void UpdateTitle() { Text = "ZorEdit - " + (path == null ? "untitled" : Path.GetFileName(path)) + (dirty ? " *" : "") + "   (Vaults of Zor level editor)"; }
 
-        // ================================================================ editing
-        void SetTool(Cell c)
-        {
-            tool = c;
-            selecting = picking = false;
-            selectButton.Checked = false;
-            foreach (KeyValuePair<Cell, ToolStripButton> kv in toolButtons) kv.Value.Checked = kv.Key == c;
-            toolLabel.Text = "Painting: " + CellName(c) + ".  Left button paints, right button erases.";
-            canvas.Cursor = Cursors.Cross;
-        }
-
-        void SetSelect()
-        {
-            selecting = true;
-            picking = false;
-            selectButton.Checked = true;
-            foreach (ToolStripButton b in toolButtons.Values) b.Checked = false;
-            toolLabel.Text = "Select: click a cell to edit its settings.";
-            canvas.Cursor = Cursors.Arrow;
-        }
-
-        void PaintCell(int x, int y, bool erase)
+        string CellText(int x, int y)
         {
             Level l = Cur;
-            if (picking)                    // choosing the target of a teleporter or plate
+            string s = "Cell " + x + "," + y + "  " + (l.Wall[y, x] ? "wall" : "floor");
+            if (x == l.StartX && y == l.StartY) s += "  start";
+            foreach (Inst o in l.At(x, y)) s += "  + " + o.Type + (o.Name.Length > 0 ? " (" + o.Name + ")" : "");
+            return s;
+        }
+
+        // ================================================================ painting
+        void SetTool(Tool t, string type)
+        {
+            tool = t;
+            toolType = type;
+            picking = false;
+            foreach (ToolStripButton b in fixedButtons) b.Checked = (Tool)b.Tag == t;
+            foreach (ToolStripItem b in typeButtons) if (b is ToolStripButton) ((ToolStripButton)b).Checked = t == Tool.Object && (string)b.Tag == type;
+            ObjType ty = pack == null ? null : pack.Type(type);
+            toolLabel.Text = t == Tool.Select ? "Select: click a cell to edit its objects; right-click for its menu." :
+                             t == Tool.Wall ? "Painting wall. Right button paints floor." :
+                             t == Tool.Floor ? "Painting floor. Right button paints wall." :
+                             t == Tool.Start ? "Start: click to place the player, click again to turn." :
+                             "Placing " + (ty == null ? type : ty.Id + " (" + ty.Name + ")") + ". Right-click a cell for its menu.";
+            if (canvas != null) canvas.Cursor = t == Tool.Select ? Cursors.Arrow : Cursors.Cross;
+        }
+
+        void PaintCell(int x, int y, bool right, bool first)
+        {
+            Level l = Cur;
+            if (picking)
             {
                 picking = false;
-                ObjParams p = selX < 0 ? null : l.Params(selX, selY, true);
-                if (p != null && !Level.IsBorder(x, y)) { p.A = x; p.B = y; MarkDirty(); }
-                canvas.Hold = true;         // don't paint with the rest of this click
-                ShowCellPanel();
+                if (selObj != null && !Level.IsBorder(x, y)) { selObj.P1 = x; selObj.P2 = y; MarkDirty(); }
+                canvas.Hold = true;
+                ShowObjPanel();
                 canvas.Invalidate();
                 return;
             }
-            if (selecting) { Select(x, y); return; }
+            if (right && first && (tool == Tool.Select || tool == Tool.Object)) { canvas.Hold = true; Select(x, y); CellMenu(x, y); return; }
+            if (tool == Tool.Select) { if (first) Select(x, y); return; }
             if (Level.IsBorder(x, y)) return;
-            Cell c = erase ? Cell.Floor : tool;
-            if (l.Map[y, x] != c)
+            bool changed = false;
+            switch (tool)
             {
-                if (c == Cell.Ladder)
-                    for (int yy = 0; yy < Level.H; yy++)
-                        for (int xx = 0; xx < Level.W; xx++)
-                            if (l.Map[yy, xx] == Cell.Ladder) l.Map[yy, xx] = Cell.Floor;
-                l.Map[y, x] = c;
-                l.Objs.Remove(y * Level.W + x);     // a new kind of cell starts with default settings
+                case Tool.Wall:
+                case Tool.Floor:
+                    {
+                        bool wall = (tool == Tool.Wall) != right;
+                        if (wall && x == l.StartX && y == l.StartY) break;
+                        if (l.Wall[y, x] != wall) { l.Wall[y, x] = wall; changed = true; }
+                        break;
+                    }
+                case Tool.Start:
+                    if (!first) break;
+                    if (x == l.StartX && y == l.StartY) l.Facing = (l.Facing + (right ? 3 : 1)) & 3;
+                    else { l.StartX = x; l.StartY = y; l.Wall[y, x] = false; }
+                    loading = true; cFacing.SelectedIndex = l.Facing; loading = false;
+                    changed = true;
+                    break;
+                case Tool.Object:
+                    if (!first) break;
+                    if (right)
+                    {
+                        Inst top = l.At(x, y).LastOrDefault();
+                        if (top != null) { l.Objs.Remove(top); changed = true; }
+                        Select(x, y);
+                    }
+                    else
+                    {
+                        if (l.At(x, y).Any(o => o.Type == toolType)) { Select(x, y); break; }
+                        if (l.Objs.Count >= Level.MaxObjects) { Error("A level can hold at most " + Level.MaxObjects + " objects."); break; }
+                        ObjType ty = pack.Type(toolType);
+                        if (ty != null && ty.Look != 1) l.Wall[y, x] = false;
+                        Inst ni = new Inst { X = x, Y = y, Type = toolType };
+                        l.Objs.Add(ni);
+                        changed = true;
+                        Select(x, y);
+                        SelectObj(ni);
+                    }
+                    break;
+            }
+            if (changed) { MarkDirty(); UpdateInfo(); }
+            canvas.Invalidate();
+        }
+
+        // ================================================================ behaviours
+        BehaviourContext ObjContext()
+        {
+            Inst o = selObj;
+            int ti = o == null ? -1 : pack.TypeIndex(o.Type);
+            return new BehaviourContext
+            {
+                Pack = pack, Level = Cur, Scope = ti + 1, Self = o == null ? -1 : Cur.Objs.IndexOf(o),
+                Title = o == null ? "" : "this " + o.Type + (o.Name.Length > 0 ? " (" + o.Name + ")" : "") + (o.OnMap ? " at " + o.X + "," + o.Y : "")
+            };
+        }
+
+        BehaviourContext TypeContext()
+        {
+            ObjType t = SelType();
+            return new BehaviourContext { Pack = pack, Scope = t == null ? 0 : pack.TypeIndex(t.Id) + 1, Title = t == null ? "" : "every " + t.Id };
+        }
+
+        static string CellPattern(int x, int y) { return @"\bat\s+" + x + @"\s*,\s*" + y + @"\b"; }
+
+        /// The right-click menu of a map cell.
+        void CellMenu(int x, int y)
+        {
+            Level l = Cur;
+            ContextMenuStrip m = new ContextMenuStrip();
+            m.Items.Add(new ToolStripLabel("Cell " + x + "," + y + (l.Wall[y, x] ? " (wall)" : "")) { Font = new Font(Font, FontStyle.Bold) });
+            bool border = Level.IsBorder(x, y);
+            if (!border)
+            {
+                ToolStripMenuItem place = new ToolStripMenuItem("Place object");
+                foreach (ObjType t in pack.Types)
+                {
+                    string id = t.Id;
+                    place.DropDownItems.Add(new ToolStripMenuItem(t.Id + "  -  " + t.Name, MapCanvas.TypeSwatch(t), (s, e) => PlaceAt(x, y, id)));
+                }
+                if (pack.Types.Count == 0) place.DropDownItems.Add(new ToolStripMenuItem("(no kinds of object yet: Objects tab > New or Library)") { Enabled = false });
+                place.DropDownItems.Add(new ToolStripSeparator());
+                place.DropDownItems.Add(new ToolStripMenuItem("From the library...", null, (s, e) => { AddFromLibrary(); }));
+                m.Items.Add(place);
+            }
+            foreach (Inst o in l.At(x, y).ToList())
+            {
+                Inst oo = o;
+                ObjType t = pack.Type(o.Type);
+                ToolStripMenuItem it = new ToolStripMenuItem(o.Type + (o.Name.Length > 0 ? " (" + o.Name + ")" : ""), t == null ? null : MapCanvas.TypeSwatch(t));
+                it.DropDownItems.Add(new ToolStripMenuItem("Select / edit", null, (s, e) => SelectObj(oo)));
+                it.DropDownItems.Add(new ToolStripMenuItem("Add a behaviour to this object only...", null, (s, e) => { SelectObj(oo); oBeh.Add(); }));
+                it.DropDownItems.Add(new ToolStripMenuItem("Add a behaviour to every " + o.Type + "...", null, (s, e) => EditTypeBehaviour(oo.Type)));
+                it.DropDownItems.Add(new ToolStripMenuItem("Pick its target (P1,P2) on the map", null, (s, e) => { SelectObj(oo); picking = true; lObjType.Text = "Click the target cell on the map (Esc cancels)."; }));
+                it.DropDownItems.Add(new ToolStripMenuItem("Remove", null, (s, e) => { SelectObj(oo); RemoveSelected(); }));
+                m.Items.Add(it);
+            }
+            m.Items.Add(new ToolStripSeparator());
+            if (!border)
+            {
+                m.Items.Add(new ToolStripMenuItem("Add a behaviour to this cell (when the player steps here)...", null, (s, e) =>
+                    lBeh.Add("on arrive if at " + x + "," + y + " then say \"\"")));
+                m.Items.Add(new ToolStripMenuItem("Add a behaviour for walking into this cell...", null, (s, e) =>
+                    lBeh.Add("on bump if ahead " + x + "," + y + " then say \"\"")));
+                List<int> rules = CellRules(x, y);
+                if (rules.Count > 0)
+                {
+                    ToolStripMenuItem ed = new ToolStripMenuItem("Edit this cell's behaviours");
+                    foreach (int k in rules)
+                    {
+                        int kk = k;
+                        string line = lBeh.Statement(k);
+                        ed.DropDownItems.Add(new ToolStripMenuItem(line.Length > 80 ? line.Substring(0, 77) + "..." : line, null, (s, e) => lBeh.EditAt(kk)));
+                    }
+                    m.Items.Add(ed);
+                }
+                m.Items.Add(new ToolStripSeparator());
+                m.Items.Add(new ToolStripMenuItem("Start here", null, (s, e) =>
+                {
+                    l.StartX = x; l.StartY = y; l.Wall[y, x] = false;
+                    canvas.Invalidate(); MarkDirty(); UpdateInfo();
+                }));
+                m.Items.Add(new ToolStripMenuItem(l.Wall[y, x] ? "Make floor" : "Make wall", null, (s, e) =>
+                {
+                    if (!l.Wall[y, x] && x == l.StartX && y == l.StartY) return;
+                    l.Wall[y, x] = !l.Wall[y, x];
+                    canvas.Invalidate(); MarkDirty(); UpdateInfo();
+                }));
+            }
+            m.Closed += (s, e) => canvas.Hold = false;
+            m.Show(canvas, canvas.PointToClient(Cursor.Position));
+        }
+
+        /// Level statements that mention cell x,y.
+        List<int> CellRules(int x, int y)
+        {
+            List<int> r = new List<int>();
+            for (int k = 0; k < lBeh.Count; k++)
+                if (Regex.IsMatch(lBeh.Statement(k), CellPattern(x, y), RegexOptions.IgnoreCase) ||
+                    Regex.IsMatch(lBeh.Statement(k), @"\bahead\s+" + x + @"\s*,\s*" + y + @"\b", RegexOptions.IgnoreCase)) r.Add(k);
+            return r;
+        }
+
+        void PlaceAt(int x, int y, string type)
+        {
+            Level l = Cur;
+            if (l.Objs.Count >= Level.MaxObjects) { Error("A level can hold at most " + Level.MaxObjects + " objects."); return; }
+            ObjType ty = pack.Type(type);
+            if (ty != null && ty.Look != 1) l.Wall[y, x] = false;
+            Inst ni = new Inst { X = x, Y = y, Type = type };
+            l.Objs.Add(ni);
+            Select(x, y);
+            SelectObj(ni);
+            canvas.Invalidate();
+            MarkDirty();
+            UpdateInfo();
+        }
+
+        void EditTypeBehaviour(string id)
+        {
+            int i = pack.TypeIndex(id);
+            if (i < 0) return;
+            typeList.SelectedIndex = i;
+            tBeh.Add();
+        }
+
+        void AddFromLibrary()
+        {
+            Pack lib = Library.Load();
+            if (lib.Types.Count == 0) { Error("The library (levels\\library.zlp) could not be found or is empty."); return; }
+            using (LibraryForm f = new LibraryForm(lib, pack))
+            {
+                if (f.ShowDialog(this) != DialogResult.OK || f.Chosen.Count == 0) return;
+                if (pack.Types.Count + f.Chosen.Count > Pack.MaxTypes) { Error("A pack can have at most " + Pack.MaxTypes + " kinds of object."); return; }
+                string status = pack.StatusCounter;
+                List<string> added = Library.Import(lib, pack, f.Chosen);
+                if (pack.StatusCounter != status) { loading = true; tStatus.Text = pack.StatusCounter; tStatusLabel.Text = pack.StatusLabel; loading = false; }
+                RefreshTypes(pack.Types.Count - 1);
+                ShowType();
+                RebuildPalette();
+                canvas.Invalidate();
                 MarkDirty();
                 UpdateInfo();
+                List<string> extra = added.Except(f.Chosen, StringComparer.OrdinalIgnoreCase).ToList();
+                sInfo.Text = "Added " + string.Join(", ", added) + (extra.Count > 0 ? "  (" + string.Join(", ", extra) + " came along because they are needed)" : "") + ".";
             }
-            // painting something with settings selects it, so they can be edited straight away
-            if (ParamSpec.For(c) != null) Select(x, y);
-            else if (x == selX && y == selY) Select(-1, -1);
-            canvas.Invalidate();
         }
 
         void Select(int x, int y)
         {
             selX = x; selY = y;
             canvas.Selected = new Point(x, y);
-            ShowCellPanel();
+            selObj = x < 0 ? null : Cur.At(x, y).FirstOrDefault();
+            ShowObjPanel();
         }
 
-        /// Fill the selected-cell panel with the fields the cell type has.
-        void ShowCellPanel()
+        void SelectObj(Inst o)
         {
-            if (gCell == null) return;
+            selObj = o;
+            if (o != null && o.OnMap) { selX = o.X; selY = o.Y; canvas.Selected = new Point(o.X, o.Y); }
+            ShowObjPanel();
+        }
+
+        /// Fill the selected-object panel.
+        void ShowObjPanel()
+        {
+            if (gObj == null || pack == null) return;
             bool was = loading;
             loading = true;
-            Level l = pack == null ? null : Cur;
-            ParamSpec spec = l == null || selX < 0 ? null : ParamSpec.For(l.Map[selY, selX]);
-            ObjParams p = spec == null ? null : (l.Params(selX, selY, false) ?? new ObjParams());
-            lCellTitle.Text = selX < 0 ? "No cell selected" : CellName(l.Map[selY, selX]) + " at " + selX + "," + selY;
-            for (int i = 0; i < 4; i++)
+            Level l = Cur;
+            lCell.Text = selX < 0 ? "No cell selected" : CellText(selX, selY);
+            cObjs.Items.Clear();
+            foreach (Inst o in l.Objs.OrderBy(o => o.OnMap ? 1 : 0).ThenBy(o => o.Y).ThenBy(o => o.X))
             {
-                bool on = spec != null && spec.Labels[i] != null;
-                lP[i].Visible = nP[i].Visible = on;
-                if (!on) continue;
-                lP[i].Text = spec.Labels[i];
-                nP[i].Maximum = spec.Max[i];
-                SetNum(nP[i], i == 0 ? p.A : i == 1 ? p.B : i == 2 ? p.C : p.D);
+                string where = o.Nowhere ? "nowhere" : o.Carried ? "carried" : o.X + "," + o.Y;
+                ObjItem it = new ObjItem { O = o, S = (o.Name.Length > 0 ? o.Name + " - " : "") + o.Type + "  at " + where };
+                cObjs.Items.Add(it);
+                if (o == selObj) cObjs.SelectedItem = it;
             }
-            if (spec != null && l.Map[selY, selX] == Cell.Key || spec != null && l.Map[selY, selX] == Cell.Door)
-                lP[0].Text = spec.Labels[0] + ":  " + pack.Names[Math.Max(0, Math.Min(3, p.A))];
-            bTarget.Visible = spec != null && spec.Target;
-            lPText.Visible = tPText.Visible = spec != null && spec.TextLabel != null;
-            if (tPText.Visible) { lPText.Text = spec.TextLabel; tPText.Text = (p.Text ?? "").Replace("|", "\r\n"); }
-            lPText2.Visible = tPText2.Visible = spec != null && spec.Text2Label != null;
-            if (tPText2.Visible) { lPText2.Text = spec.Text2Label; tPText2.Text = (p.Text2 ?? "").Replace("|", "\r\n"); }
-            if (spec != null && l.Map[selY, selX] == Cell.Npc)
+            bool on = selObj != null;
+            foreach (Control k in new Control[] { nOX, nOY, chOValue, nOValue, nOP1, nOP2, tOName, tOText1, tOText2, tOText3, oBeh, bTarget, bRemove }) k.Enabled = on;
+            if (on)
             {
-                lP[0].Text = "Looks like:  " + ParamSpec.NpcLooks[Math.Min(2, p.A)] + "  (0 hermit, 1 merchant, 2 ghost)";
-                lP[1].Text = "Does:  " + ParamSpec.NpcActions[Math.Min(4, p.B)] + "  (0-4)";
-                lP[3].Text = "Item:  " + ParamSpec.NpcItems[Math.Min(8, p.D)] + "  (0 none, 1-4 key colour 0-3, 5 sword, 6 potion, 7 gold, 8 amulet)";
-                lP[3].MaximumSize = new Size(320, 0);
+                ObjType t = pack.Type(selObj.Type);
+                lObjType.Text = t == null ? "Unknown kind of object '" + selObj.Type + "'." :
+                    t.Id + ": " + t.Name + (t.Solid ? ", solid" : "") + (t.Carry ? ", can be carried" : "") + ".  Its starting value is " + t.Value + ".";
+                SetNum(nOX, selObj.X); SetNum(nOY, selObj.Y);
+                chOValue.Checked = selObj.Value.HasValue;
+                SetNum(nOValue, selObj.Value ?? (t == null ? 0 : t.Value));
+                nOValue.Enabled = selObj.Value.HasValue;
+                SetNum(nOP1, selObj.P1); SetNum(nOP2, selObj.P2);
+                tOName.Text = selObj.Name;
+                tOText1.Text = selObj.Text(1).Replace("|", "\r\n");
+                tOText2.Text = selObj.Text(2).Replace("|", "\r\n");
+                tOText3.Text = selObj.Text(3).Replace("|", "\r\n");
+                oBeh.Script = selObj.Script;
             }
-            lCellHint.Text = selX < 0 ? "Use the Select tool (Esc) or paint a character, sign, trap, teleporter, fountain, plate, secret wall, key, door, guardian, potion or gold to edit its settings."
-                           : spec == null ? "This kind of cell has no settings."
-                           : "0 means use the default. Text is shown in the game's 30-column window.";
+            else
+            {
+                lObjType.Text = selX < 0 ? "Use the Select tool (Esc) and click a cell, or pick an object above. Right-click a cell for its menu." : "Nothing here. Pick a kind of object on the toolbar to place one, or right-click the cell.";
+                foreach (TextBox b in new[] { tOName, tOText1, tOText2, tOText3 }) b.Text = "";
+                oBeh.Script = "";
+            }
+            canvas.SelectedObj = selObj;
             loading = was;
         }
 
-        void ParamChanged(object sender, EventArgs e)
+        void ObjChanged(object sender, EventArgs e)
         {
-            if (loading || selX < 0) return;
-            ObjParams p = Cur.Params(selX, selY, true);
-            if (p == null) return;
-            p.A = (int)nP[0].Value; p.B = (int)nP[1].Value; p.C = (int)nP[2].Value; p.D = (int)nP[3].Value;
-            p.Text = tPText.Text.Replace("\r\n", "|");
-            p.Text2 = tPText2.Text.Replace("\r\n", "|");
-            if (Cur.Map[selY, selX] == Cell.Npc && sender != tPText && sender != tPText2) ShowCellPanel();
-            if (sender == nP[0] && (Cur.Map[selY, selX] == Cell.Key || Cur.Map[selY, selX] == Cell.Door)) ShowCellPanel();
+            if (loading || selObj == null) return;
+            Inst o = selObj;
+            o.X = (int)nOX.Value; o.Y = (int)nOY.Value;
+            if (o.X == 0 && o.Y > 1) o.Y = 1;
+            o.Value = chOValue.Checked ? (int?)nOValue.Value : null;
+            nOValue.Enabled = chOValue.Checked;
+            o.P1 = (int)nOP1.Value; o.P2 = (int)nOP2.Value;
+            o.Name = tOName.Text.Trim();
+            o.SetText(1, tOText1.Text.Replace("\r\n", "|"));
+            o.SetText(2, tOText2.Text.Replace("\r\n", "|"));
+            o.SetText(3, tOText3.Text.Replace("\r\n", "|"));
+            if (sender == nOX || sender == nOY || sender == tOName) { SelectObj(o); }
             canvas.Invalidate();
             MarkDirty();
         }
 
+        void RemoveSelected()
+        {
+            if (selObj == null) return;
+            Cur.Objs.Remove(selObj);
+            selObj = null;
+            Select(selX, selY);
+            canvas.Invalidate();
+            MarkDirty();
+            UpdateInfo();
+        }
+
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
-            if (!(ActiveControl is TextBoxBase) && !(ActiveControl is NumericUpDown) && (keyData & (Keys.Control | Keys.Alt)) == 0)
+            if (!(ActiveControl is TextBoxBase) && !(ActiveControl is NumericUpDown) && !(ActiveControl is ComboBox) && (keyData & (Keys.Control | Keys.Alt | Keys.Shift)) == 0)
             {
                 Keys code = keyData & Keys.KeyCode;
-                if (code == Keys.Escape) { if (picking) { picking = false; ShowCellPanel(); } else SetSelect(); return true; }
-                int k = (int)code - (int)Keys.D0;
-                bool shift = (keyData & Keys.Shift) != 0;
-                if (k >= 0 && k <= 9 && !shift) { SetTool(Palette[(k + 9) % 10]); return true; }
-                if (k >= 1 && k <= 7 && shift) { SetTool(Palette[9 + k]); return true; }
+                if (code == Keys.Escape) { if (picking) { picking = false; ShowObjPanel(); } else SetTool(Tool.Select, null); return true; }
+                if (code == Keys.D1) { SetTool(Tool.Wall, null); return true; }
+                if (code == Keys.D2) { SetTool(Tool.Floor, null); return true; }
+                if (code == Keys.D3) { SetTool(Tool.Start, null); return true; }
+                int k = "4567890".IndexOf((char)('0' + ((int)code - (int)Keys.D0)));
+                if (code >= Keys.D0 && code <= Keys.D9 && k >= 0 && k < pack.Types.Count) { SetTool(Tool.Object, pack.Types[k].Id); return true; }
             }
             return base.ProcessCmdKey(ref msg, keyData);
         }
 
+        // ================================================================ object types
+        void RefreshTypes(int select)
+        {
+            bool was = loading;
+            loading = true;
+            typeList.Items.Clear();
+            foreach (ObjType t in pack.Types) typeList.Items.Add(t.Id + "  -  " + t.Name);
+            if (pack.Types.Count > 0) typeList.SelectedIndex = Math.Max(0, Math.Min(select, pack.Types.Count - 1));
+            loading = was;
+        }
+
+        ObjType SelType() { int i = typeList.SelectedIndex; return i >= 0 && i < pack.Types.Count ? pack.Types[i] : null; }
+
+        void ShowType()
+        {
+            if (loading || pack == null) return;
+            loading = true;
+            ObjType t = SelType();
+            foreach (Control k in new Control[] { tTId, tTName, tTSymbol, tTNouns, tTDesc, tBeh, chSolid, chCarry, chKeep, nTValue, cTLook }) k.Enabled = t != null;
+            if (t != null)
+            {
+                tTId.Text = t.Id; tTName.Text = t.Name; tTSymbol.Text = t.Symbol == '\0' ? "" : t.Symbol.ToString();
+                cTLook.SelectedIndex = Math.Max(0, Array.IndexOf(ObjType.LookCodes, t.Look));
+                chSolid.Checked = t.Solid; chCarry.Checked = t.Carry; chKeep.Checked = t.Keep;
+                tTNouns.Text = t.Nouns; SetNum(nTValue, t.Value);
+                tTDesc.Text = t.Desc.Replace("|", "\r\n");
+                tBeh.Script = t.Script;
+                int n = pack.Levels.Sum(l => l.Objs.Count(o => o.Type.Equals(t.Id, StringComparison.OrdinalIgnoreCase)));
+                lTypeUse.Text = n + " placed in the pack.";
+            }
+            else { lTypeUse.Text = "No kinds of object yet. Press New to make one, or Library to copy ready-made ones."; tBeh.Script = ""; }
+            loading = false;
+        }
+
+        void TypeChanged(object sender, EventArgs e)
+        {
+            if (loading) return;
+            ObjType t = SelType();
+            if (t == null) return;
+            string oldId = t.Id, nid = tTId.Text.Trim();
+            if (sender == tTId && nid.Length > 0 && Util.IsWord(nid) && pack.Type(nid) == null)
+            {
+                t.Id = nid;                 // rename: placed objects follow
+                foreach (Level l in pack.Levels) foreach (Inst o in l.Objs) if (o.Type.Equals(oldId, StringComparison.OrdinalIgnoreCase)) o.Type = nid;
+                if (toolType == oldId) toolType = nid;
+            }
+            t.Name = tTName.Text;
+            t.Symbol = tTSymbol.Text.Length > 0 ? tTSymbol.Text[0] : '\0';
+            t.Look = ObjType.LookCodes[Math.Max(0, cTLook.SelectedIndex)];
+            t.Solid = chSolid.Checked; t.Carry = chCarry.Checked; t.Keep = chKeep.Checked;
+            t.Nouns = tTNouns.Text.Trim();
+            t.Value = (int)nTValue.Value;
+            t.Desc = tTDesc.Text.Replace("\r\n", "|");
+            if (sender == tTId || sender == tTName)
+            {
+                int i = typeList.SelectedIndex;
+                loading = true; typeList.Items[i] = t.Id + "  -  " + t.Name; loading = false;
+            }
+            if (sender != tTDesc && sender != tTNouns) { RebuildPalette(); canvas.Invalidate(); }
+            MarkDirty();
+        }
+
+        void NewType(ObjType from)
+        {
+            if (pack.Types.Count >= Pack.MaxTypes) { Error("A pack can have at most " + Pack.MaxTypes + " kinds of object."); return; }
+            ObjType t = from == null ? new ObjType { Id = "thing", Name = "A THING", Look = 19, Carry = true, Nouns = "THING" } : from.Clone();
+            string id = t.Id;
+            for (int k = 2; pack.Type(t.Id) != null; k++) t.Id = id + k;
+            int at = typeList.SelectedIndex + 1;
+            pack.Types.Insert(at, t);
+            RefreshTypes(at);
+            ShowType();
+            RebuildPalette();
+            MarkDirty();
+        }
+
+        void DeleteType()
+        {
+            ObjType t = SelType();
+            if (t == null) return;
+            int n = pack.Levels.Sum(l => l.Objs.Count(o => o.Type.Equals(t.Id, StringComparison.OrdinalIgnoreCase)));
+            if (MessageBox.Show(this, "Delete the object type " + t.Id + "?" + (n > 0 ? "\n" + n + " placed object(s) of this type will be removed too." : ""), "ZorEdit", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            foreach (Level l in pack.Levels) l.Objs.RemoveAll(o => o.Type.Equals(t.Id, StringComparison.OrdinalIgnoreCase));
+            int i = typeList.SelectedIndex;
+            pack.Types.Remove(t);
+            RefreshTypes(i);
+            ShowType();
+            RebuildPalette();
+            Select(selX, selY);
+            canvas.Invalidate();
+            MarkDirty();
+            UpdateInfo();
+        }
+
+        void MoveType(int d)
+        {
+            int i = typeList.SelectedIndex, j = i + d;
+            if (i < 0 || j < 0 || j >= pack.Types.Count) return;
+            ObjType t = pack.Types[i];
+            pack.Types[i] = pack.Types[j];
+            pack.Types[j] = t;
+            RefreshTypes(j);
+            ShowType();
+            RebuildPalette();
+            MarkDirty();
+        }
+
+        // ================================================================ levels
         void AddLevel(Level l)
         {
             if (pack.Levels.Count >= Pack.MaxLevels) { Error("A pack can hold at most " + Pack.MaxLevels + " levels."); return; }
@@ -653,27 +1024,24 @@ namespace ZorEdit
 
         void GenerateMaze()
         {
-            if (MessageBox.Show(this, "Replace the map of level " + (levelList.SelectedIndex + 1) + " with a random maze?\nThe ladder, a sword, a guardian guarding a key, a locked door before the amulet, potions and gold are placed for you.",
+            if (MessageBox.Show(this, "Replace the walls of level " + (levelList.SelectedIndex + 1) + " with a random maze?\nThe start moves to the top left; objects left inside walls are removed.",
                 "Generate maze", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
             Level g = MazeGen.Generate(rng, Cur);
-            Cur.Map = g.Map;
-            canvas.Invalidate();
+            Level l = Cur;
+            l.Wall = g.Wall; l.Objs = g.Objs; l.StartX = g.StartX; l.StartY = g.StartY; l.Facing = g.Facing;
+            ShowLevel();
             MarkDirty();
-            UpdateInfo();
         }
 
         void ClearMap()
         {
-            if (MessageBox.Show(this, "Clear the map of this level to open floor?", "Clear map", MessageBoxButtons.OKCancel) != DialogResult.OK) return;
+            if (MessageBox.Show(this, "Clear the walls of this level to open floor? (Objects stay.)", "Clear map", MessageBoxButtons.OKCancel) != DialogResult.OK) return;
             for (int y = 0; y < Level.H; y++)
                 for (int x = 0; x < Level.W; x++)
-                    Cur.Map[y, x] = Level.IsBorder(x, y) ? Cell.Wall : Cell.Floor;
-            Cur.Map[1, 1] = Cell.Ladder;
+                    Cur.Wall[y, x] = Level.IsBorder(x, y);
             canvas.Invalidate();
             MarkDirty();
         }
-
-        static string CellName(Cell c) { return PaletteNames[Array.IndexOf(Palette, c)]; }
 
         // ================================================================ files
         bool ConfirmLose()
@@ -719,15 +1087,21 @@ namespace ZorEdit
             catch (Exception ex) { Error("Could not save:\n" + ex.Message); return false; }
         }
 
+        void CheckScript()
+        {
+            List<string> errs = Checker.Check(pack).Where(s => s.StartsWith("ERROR")).ToList();
+            lScriptResult.ForeColor = errs.Count == 0 ? Color.DarkGreen : Color.DarkRed;
+            lScriptResult.Text = errs.Count == 0 ? "All scripts compile." : string.Join("\n", errs.Take(6).Select(e => e.Substring(6)));
+            UpdateInfo();
+        }
+
         bool CheckPack(bool showOk)
         {
-            List<string> all = new List<string>();
-            for (int i = 0; i < pack.Levels.Count; i++) all.AddRange(Checker.Check(pack.Levels[i], i));
-            all.AddRange(Checker.CheckScripts(pack));
+            List<string> all = Checker.Check(pack);
             bool errors = all.Any(s => s.StartsWith("ERROR"));
-            if (all.Count == 0) { if (showOk) MessageBox.Show(this, "All " + pack.Levels.Count + " level(s) look playable.", "Check pack", MessageBoxButtons.OK, MessageBoxIcon.Information); return true; }
+            if (all.Count == 0) { if (showOk) MessageBox.Show(this, "All " + pack.Levels.Count + " level(s) compile and look complete.", "Check pack", MessageBoxButtons.OK, MessageBoxIcon.Information); return true; }
             if (showOk || errors)
-                MessageBox.Show(this, string.Join("\n\n", all), errors ? "Check pack - fix these before exporting" : "Check pack", MessageBoxButtons.OK, errors ? MessageBoxIcon.Error : MessageBoxIcon.Warning);
+                MessageBox.Show(this, string.Join("\n\n", all.Take(20)), errors ? "Check pack - fix these before exporting" : "Check pack", MessageBoxButtons.OK, errors ? MessageBoxIcon.Error : MessageBoxIcon.Warning);
             return !errors;
         }
 
@@ -821,10 +1195,8 @@ namespace ZorEdit
                 }
                 else
                 {
-                    // Boot TRSDOS, copy the engine and level file onto a blank disk
-                    // in drive 2 with IMPORT2 (utilities disk in drive 1), then run
-                    // ZOR so it loads ZOR/LEV from disk. Typed input waits until
-                    // TRSDOS asks for a command, so the lines can be queued.
+                    // Boot TRSDOS, copy the engine and level file onto a blank disk in
+                    // drive 2 with IMPORT2 (utilities disk in drive 1), then run ZOR.
                     File.WriteAllBytes(Path.Combine(dir, "zor.cmd"), Engine.Load().Write());
                     File.WriteAllBytes(Path.Combine(dir, "zor.lev"), Compiler.Build(pack));
                     args = "-m1 -frehd_dir \"" + dir + "\" -d1 :tu1 -d2 :tb1 -id 200 " +
@@ -839,18 +1211,37 @@ namespace ZorEdit
         void ShowHelp()
         {
             Info("VAULTS OF ZOR level editor\n\n" +
-                 "Map: pick a tile on the toolbar (or keys 1-0) and paint with the left mouse button. The right button erases to floor. The outer ring is always wall.\n\n" +
-                 "Every level needs one ladder (H): the player starts there, and returns to it with an amulet (A) to finish the level.\n" +
-                 "Doors need a key (K) of the same colour; each key opens one door. Guardians (G) block the way and can only be killed with a sword (S). Potions (P) heal, gold ($) scores.\n\n" +
-                 "Spaces with game logic: Sign (shows its text), Trap (damage, hidden or visible, once or every time), Teleporter (moves the player to its target), Fountain (heals, can run dry), Pressure plate (opens its target cell), Secret wall (looks like wall, walk straight through).\n\n" +
-                 "Characters (&): a hermit, merchant or ghost that talks in a speech bubble when the player walks into it or types TALK. It can just talk, give an item, sell an item for gold, heal, or step aside; set what it says first and what it says once its deed is done.\n\n" +
-                 "Settings: use the Select tool (Esc) or just paint the object, then edit it under Selected cell on the Level tab. 0 means use the default. Teleporters and plates need a target: press Pick target on map, then click the cell.\n\n" +
-                 "Levels are played in list order; HP, gold, potions and the sword carry over to the next level.\n\n" +
-                 "Test > Check Pack (F7) does a play-through to make sure every amulet can be reached.\n" +
-                 "Test > Play in Emulator (F5) runs the pack in trs80gp. Shift+F5 boots TRSDOS and loads the level file from disk the way a real machine would.\n\n" +
-                 "File > Export Level File writes a .LEV file for a TRSDOS disk: run it with  ZOR NAME/LEV  (or name it ZOR/LEV).\n" +
-                 "File > Export Game writes a single ZOR.CMD with the levels built in.\n\n" +
-                 "Packs are saved as .ZLP text files that you can also edit by hand.");
+                 "Map: walls and floor only. Pick Wall, Floor or Start on the toolbar (keys 1-3) and paint. The outer ring is always wall. Click the start again to turn the player.\n\n" +
+                 "Objects: everything else (keys, doors, monsters, characters, traps, exits...) is an object. The Objects tab lists the kinds of object in this pack: what each looks like, whether it blocks the way or can be carried, the words the player can use for it, and its behaviours. Each kind gets a toolbar button (keys 4-0): click a cell to place one. A new pack has no objects at all: press Library on the Objects tab to copy ready-made ones (keys, doors, monsters, signs, exits...), or New to make your own.\n\n" +
+                 "Right-click a cell (Select or object tool) for its menu: place an object, add a behaviour to one object, to every object of its kind, or to the cell itself (something happens when the player steps there), move the start, or change wall / floor. Cells with behaviours have a green corner; objects with their own behaviours a magenta dot.\n\n" +
+                 "Behaviours are built from When (a command, stepping onto it, walking into it, every turn, level start), If (conditions) and Do (actions). Double-click a behaviour to change it; tick 'As text' to edit the rules directly.\n\n" +
+                 "Selected object (Level tab): every placed object has its own value (hit points, uses, gold...), two numbers P1,P2 (for example a teleporter's or plate's target: Pick target on map), a description, texts 2 and 3 for 'say this 2' / 'speak this 2', and behaviours of its own.\n\n" +
+                 "A level is finished by a behaviour that says 'next' (the old packs use a ladder you climb with the amulet), and the game is won by 'win' or by 'next' on the last level.\n\n" +
+                 "Test > Check Pack (F7) compiles everything and looks for problems. Test > Play in Emulator (F5) runs the pack in trs80gp.\n\n" +
+                 "Older packs are converted when opened: their fixed cells become ordinary object types you can change.");
+        }
+
+        void ShowScriptHelp()
+        {
+            Info("RULES  (one per line; # comment; a line starting with a space continues the last)\n\n" +
+                 "on VERB [NOUN | any] [if CONDITION and ...] then ACTION; ACTION...\n" +
+                 "on arrive | on bump | on start | every turn  [if ...] then ...\n" +
+                 "synonym NEWWORD = WORD\n\n" +
+                 "In an object type's behaviours 'this' is the placed object; 'value' its value, 'p1' its P1 and 'target' the cell P1,P2. " +
+                 "For a typed command the rules of the objects here, then in front, then carried are tried; the first that acts ends the command (unless it says continue). " +
+                 "For arrive, bump, start and every turn all rules that hold act, unless one says stop.\n\n" +
+                 "CONDITIONS ('not' in front reverses; OBJ = this or an object name, TYPE = a kind of object):\n" +
+                 "  carried OBJ | carried TYPE [N]   has TYPE [N]   here OBJ | TYPE   present OBJ   exists OBJ   near OBJ\n" +
+                 "  ahead OBJ | TYPE | X,Y   at X,Y   is OBJ | TYPE   matches TYPE   flag NAME   chance PERCENT\n" +
+                 "  counter NAME >= N  (> = < <=)   value [OBJ] >= N   hp >= N\n\n" +
+                 "ACTIONS (N may be a number, value or p1 where shown as N*):\n" +
+                 "  say \"TEXT\" | say OBJ N   speak \"TEXT\" | speak OBJ N   die \"TEXT\"\n" +
+                 "  set FLAG   clear FLAG   counter NAME = N   add NAME N*   sub NAME N*   score N*\n" +
+                 "  get OBJ   drop OBJ   remove OBJ   put OBJ at X,Y   swap OBJ OBJ   become [OBJ] TYPE\n" +
+                 "  value [OBJ] = N | + N | - N   give TYPE [N]   take TYPE [N]   create TYPE at X,Y   useup TYPE\n" +
+                 "  cell X,Y floor | wall | open   goto X,Y   hurt N* [random]   heal N* (0 = fully)\n" +
+                 "  next   win   inventory   look   continue   stop\n\n" +
+                 "X,Y may be 'target' in put, create, cell and goto. Flags (32), counters (16) and words are shared by all levels.");
         }
 
         void Info(string s) { MessageBox.Show(this, s, "ZorEdit", MessageBoxButtons.OK, MessageBoxIcon.Information); }
@@ -863,9 +1254,9 @@ namespace ZorEdit
         public const int CS = 20;
         Level level;
         int hx = -1, hy = -1;
-        public event Action<int, int, bool> Painted;
+        public event Action<int, int, bool, bool> Painted;     // x, y, right button, first cell of the drag
         public event Action<int, int> Hover;
-
+        public Pack Pack;
         static readonly Color Bg = Color.FromArgb(10, 10, 14), WallC = Color.FromArgb(205, 210, 255), BorderC = Color.FromArgb(120, 125, 165);
 
         public MapCanvas()
@@ -878,14 +1269,36 @@ namespace ZorEdit
         public Level Level { get { return level; } set { level = value; Invalidate(); } }
         Point selected = new Point(-1, -1);
         public Point Selected { get { return selected; } set { selected = value; Invalidate(); } }
+        Inst selObj;
+        public Inst SelectedObj { get { return selObj; } set { selObj = value; Invalidate(); } }
         public bool Hold;                   // ignore the rest of this mouse drag
-        List<KeyValuePair<Point2, string>> scriptItems = new List<KeyValuePair<Point2, string>>();
-        public List<KeyValuePair<Point2, string>> ScriptItems { get { return scriptItems; } set { scriptItems = value; Invalidate(); } }
+        int lastX = -1, lastY = -1;
 
-        /// Colours used for keys and doors of colour 0-3 (brass, iron, silver, gold).
-        /// Colours for the three character looks (hermit, merchant, ghost).
-        public static readonly Color[] NpcColours = { Color.LightGreen, Color.Goldenrod, Color.WhiteSmoke };
-        public static readonly Color[] KeyColours = { Color.FromArgb(205, 127, 50), Color.FromArgb(130, 140, 150), Color.Silver, Color.Gold };
+        public static Color LookColour(int look)
+        {
+            switch (look)
+            {
+                case 1: return Color.FromArgb(150, 155, 200);
+                case 2: return Color.FromArgb(205, 127, 50);
+                case 3: return Color.LightGreen;
+                case 4: return Color.OrangeRed;
+                case 5: return Color.Gold;
+                case 6: return Color.LightSkyBlue;
+                case 7: return Color.Violet;
+                case 8: return Color.Khaki;
+                case 9: return Color.Gold;
+                case 10: return Color.Wheat;
+                case 11: return Color.Red;
+                case 12: return Color.Cyan;
+                case 13: return Color.DeepSkyBlue;
+                case 14: return Color.Silver;
+                case 16: return Color.LightGreen;
+                case 17: return Color.Goldenrod;
+                case 18: return Color.WhiteSmoke;
+                case 0: return Color.Gray;
+            }
+            return Color.Orange;
+        }
 
         protected override void OnPaint(PaintEventArgs e)
         {
@@ -897,100 +1310,106 @@ namespace ZorEdit
                 for (int x = 0; x <= Level.W; x++) g.DrawLine(grid, x * CS, 0, x * CS, Level.H * CS);
                 for (int y = 0; y <= Level.H; y++) g.DrawLine(grid, 0, y * CS, Level.W * CS, y * CS);
             }
-            int face = level.StartFacing();
             for (int y = 0; y < Level.H; y++)
                 for (int x = 0; x < Level.W; x++)
-                    DrawCell(g, new Rectangle(x * CS, y * CS, CS, CS), level.Map[y, x], Level.IsBorder(x, y), face, level.Params(x, y, false));
-            // teleporter and plate targets
-            foreach (KeyValuePair<int, ObjParams> kv in level.Objs)
+                {
+                    Rectangle r = new Rectangle(x * CS, y * CS, CS, CS);
+                    if (level.Wall[y, x]) using (Brush b = new SolidBrush(Level.IsBorder(x, y) ? BorderC : WallC)) g.FillRectangle(b, r);
+                    else g.FillRectangle(Brushes.DimGray, r.X + CS / 2 - 1, r.Y + CS / 2 - 1, 2, 2);
+                }
+            // start and facing
             {
-                int x = kv.Key % Level.W, y = kv.Key / Level.W;
-                ParamSpec spec = ParamSpec.For(level.Map[y, x]);
-                if (spec == null || !spec.Target || kv.Value.A <= 0 || kv.Value.B <= 0) continue;
-                bool sel = selected.X == x && selected.Y == y;
-                Color col = level.Map[y, x] == Cell.Teleport ? Color.Cyan : Color.Silver;
+                Point m = new Point(level.StartX * CS + CS / 2, level.StartY * CS + CS / 2);
+                Point tip = new Point(m.X + Util.DX[level.Facing & 3] * 9, m.Y + Util.DY[level.Facing & 3] * 9);
+                using (Brush b = new SolidBrush(Color.FromArgb(60, Color.Yellow))) g.FillRectangle(b, level.StartX * CS + 1, level.StartY * CS + 1, CS - 2, CS - 2);
+                using (Pen p = new Pen(Color.Yellow, 3) { EndCap = System.Drawing.Drawing2D.LineCap.ArrowAnchor }) g.DrawLine(p, m, tip);
+            }
+            // objects: the last one placed on a cell is drawn on top
+            foreach (IGrouping<int, Inst> cell in level.Objs.Where(o => o.OnMap && o.X < Level.W && o.Y < Level.H).GroupBy(o => o.Y * Level.W + o.X))
+            {
+                Inst o = cell.Last();
+                ObjType t = Pack == null ? null : Pack.Type(o.Type);
+                Rectangle r = new Rectangle(o.X * CS, o.Y * CS, CS, CS);
+                DrawObj(g, r, t);
+                if (cell.Count() > 1) using (Font f = new Font("Segoe UI", 6f)) g.DrawString(cell.Count().ToString(), f, Brushes.White, r.X, r.Y - 1);
+                if (cell.Any(i => !string.IsNullOrWhiteSpace(i.Script))) g.FillEllipse(Brushes.Magenta, r.Right - 6, r.Y + 1, 5, 5);
+            }
+            // cells that level behaviours refer to (at X,Y / ahead X,Y): a green corner
+            foreach (Match mm in Regex.Matches(level.Script ?? "", @"\b(?:at|ahead)\s+(\d+)\s*,\s*(\d+)", RegexOptions.IgnoreCase))
+            {
+                int cx = int.Parse(mm.Groups[1].Value), cy = int.Parse(mm.Groups[2].Value);
+                if (cx >= Level.W || cy >= Level.H) continue;
+                Point[] tri = { new Point(cx * CS + 1, cy * CS + CS - 1), new Point(cx * CS + 8, cy * CS + CS - 1), new Point(cx * CS + 1, cy * CS + CS - 8) };
+                g.FillPolygon(Brushes.LimeGreen, tri);
+            }
+            // targets (P1,P2) of objects whose behaviours use "target"
+            foreach (Inst o in level.Objs)
+            {
+                if (!o.OnMap || o.P1 <= 0 || o.P2 <= 0 || o.P1 >= Level.W || o.P2 >= Level.H) continue;
+                ObjType t = Pack == null ? null : Pack.Type(o.Type);
+                if (!UsesTarget(t == null ? "" : t.Script) && !UsesTarget(o.Script)) continue;
+                bool sel = o == selObj;
+                Color col = t == null ? Color.Silver : LookColour(t.Look);
                 using (Pen p = new Pen(Color.FromArgb(sel ? 255 : 110, col), sel ? 2.5f : 1.5f) { EndCap = System.Drawing.Drawing2D.LineCap.ArrowAnchor })
                 {
                     p.DashStyle = sel ? System.Drawing.Drawing2D.DashStyle.Solid : System.Drawing.Drawing2D.DashStyle.Dash;
-                    g.DrawLine(p, x * CS + CS / 2, y * CS + CS / 2, kv.Value.A * CS + CS / 2, kv.Value.B * CS + CS / 2);
+                    g.DrawLine(p, o.X * CS + CS / 2, o.Y * CS + CS / 2, o.P1 * CS + CS / 2, o.P2 * CS + CS / 2);
                 }
-                using (Pen p = new Pen(Color.FromArgb(sel ? 255 : 110, col), 1.5f))
-                    g.DrawRectangle(p, kv.Value.A * CS + 2, kv.Value.B * CS + 2, CS - 4, CS - 4);
+                using (Pen p = new Pen(Color.FromArgb(sel ? 255 : 110, col), 1.5f)) g.DrawRectangle(p, o.P1 * CS + 2, o.P2 * CS + 2, CS - 4, CS - 4);
             }
-            // script items placed with "at x,y": a small magenta + in the corner of the cell
-            using (Pen p = new Pen(Color.Magenta, 2))
-                foreach (KeyValuePair<Point2, string> it in scriptItems)
-                {
-                    int cx = it.Key.X * CS + CS - 6, cy = it.Key.Y * CS + 6;
-                    g.DrawLine(p, cx - 4, cy, cx + 4, cy);
-                    g.DrawLine(p, cx, cy - 4, cx, cy + 4);
-                }
             if (selected.X >= 0)
                 using (Pen p = new Pen(Color.Cyan, 2)) g.DrawRectangle(p, selected.X * CS, selected.Y * CS, CS, CS);
             if (hx >= 0)
                 using (Pen p = new Pen(Color.Yellow, 2)) g.DrawRectangle(p, hx * CS + 1, hy * CS + 1, CS - 2, CS - 2);
         }
 
-        static void DrawCell(Graphics g, Rectangle r, Cell c, bool border, int face, ObjParams prm)
+        static bool UsesTarget(string s) { return Regex.IsMatch(s ?? "", @"\btarget\b", RegexOptions.IgnoreCase); }
+
+        static void DrawObj(Graphics g, Rectangle r, ObjType t)
         {
-            int colour = prm == null ? 0 : prm.A & 3;
-            switch (c)
+            if (t != null && t.Look == 1 && t.Symbol == '\0')     // looks like a wall: hatched
             {
-                case Cell.Wall:
-                    using (Brush b = new SolidBrush(border ? BorderC : WallC)) g.FillRectangle(b, r);
-                    return;
-                case Cell.Secret:           // a wall you can walk through: hatched
-                    using (Brush b = new System.Drawing.Drawing2D.HatchBrush(System.Drawing.Drawing2D.HatchStyle.WideDownwardDiagonal, Color.FromArgb(120, 125, 165), WallC))
-                        g.FillRectangle(b, r);
-                    return;
-                case Cell.Floor:
-                    g.FillRectangle(Brushes.DimGray, r.X + CS / 2 - 1, r.Y + CS / 2 - 1, 2, 2);
-                    return;
-                case Cell.Door:
-                    using (Brush b = new SolidBrush(Color.FromArgb(150, 95, 40))) g.FillRectangle(b, r.X + 2, r.Y + 2, r.Width - 4, r.Height - 4);
-                    using (Pen p = new Pen(Color.FromArgb(70, 40, 10))) { g.DrawLine(p, r.X + 7, r.Y + 2, r.X + 7, r.Bottom - 3); g.DrawLine(p, r.X + 13, r.Y + 2, r.X + 13, r.Bottom - 3); }
-                    using (Brush b = new SolidBrush(KeyColours[colour])) g.FillEllipse(b, r.Right - 8, r.Y + r.Height / 2 - 2, 5, 5);
-                    return;
-                case Cell.Plate:
-                    using (Brush b = new SolidBrush(Color.FromArgb(110, 110, 120))) g.FillRectangle(b, r.X + 3, r.Y + 5, r.Width - 6, r.Height - 10);
-                    using (Pen p = new Pen(Color.Silver)) g.DrawRectangle(p, r.X + 3, r.Y + 5, r.Width - 7, r.Height - 11);
-                    return;
-                case Cell.Ladder:
-                    using (Pen p = new Pen(Color.LightGreen, 2))
-                    {
-                        g.DrawLine(p, r.X + 6, r.Y + 3, r.X + 6, r.Bottom - 3);
-                        g.DrawLine(p, r.Right - 6, r.Y + 3, r.Right - 6, r.Bottom - 3);
-                        for (int k = 5; k < CS - 3; k += 4) g.DrawLine(p, r.X + 6, r.Y + k, r.Right - 6, r.Y + k);
-                    }
-                    // facing arrow
-                    Point m = new Point(r.X + CS / 2, r.Y + CS / 2);
-                    Point tip = new Point(m.X + Util.DX[face] * 9, m.Y + Util.DY[face] * 9);
-                    using (Pen p = new Pen(Color.Yellow, 3) { EndCap = System.Drawing.Drawing2D.LineCap.ArrowAnchor }) g.DrawLine(p, m, tip);
-                    return;
+                using (Brush b = new System.Drawing.Drawing2D.HatchBrush(System.Drawing.Drawing2D.HatchStyle.WideDownwardDiagonal, Color.FromArgb(120, 125, 165), WallC))
+                    g.FillRectangle(b, r);
+                return;
             }
-            string t = Util.MapChars[(int)c].ToString();
-            Color col = c == Cell.Guard ? Color.OrangeRed : c == Cell.Amulet ? Color.Gold : c == Cell.Gold ? Color.Khaki :
-                        c == Cell.Potion ? Color.Violet : c == Cell.Sword ? Color.LightSkyBlue :
-                        c == Cell.Key ? KeyColours[colour] : c == Cell.Sign ? Color.Wheat :
-                        c == Cell.Trap ? (prm != null && prm.B != 0 ? Color.Red : Color.Gray) :
-                        c == Cell.Teleport ? Color.Cyan : c == Cell.Fountain ? Color.DeepSkyBlue :
-                        c == Cell.Npc ? NpcColours[prm == null ? 0 : Math.Min(2, prm.A)] : Color.Orange;
-            using (Brush b = new SolidBrush(Color.FromArgb(50, col))) g.FillEllipse(b, r.X + 2, r.Y + 2, CS - 4, CS - 4);
+            Color col = t == null ? Color.Red : LookColour(t.Look);
+            string s = t == null ? "?" : t.MapSymbol.ToString();
+            using (Brush b = new SolidBrush(Color.FromArgb(t != null && t.Solid ? 90 : 45, col))) g.FillEllipse(b, r.X + 2, r.Y + 2, CS - 4, CS - 4);
             using (Font f = new Font("Consolas", 11f, FontStyle.Bold))
             using (Brush b = new SolidBrush(col))
             {
                 StringFormat sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-                g.DrawString(t, f, b, r, sf);
+                g.DrawString(s, f, b, r, sf);
             }
         }
 
-        public static Bitmap Swatch(Cell c)
+        public static Bitmap TypeSwatch(ObjType t)
+        {
+            Bitmap b = new Bitmap(CS, CS);
+            using (Graphics g = Graphics.FromImage(b)) { g.Clear(Bg); DrawObj(g, new Rectangle(0, 0, CS, CS), t); }
+            return b;
+        }
+
+        public static Bitmap TerrainSwatch(bool wall)
         {
             Bitmap b = new Bitmap(CS, CS);
             using (Graphics g = Graphics.FromImage(b))
             {
                 g.Clear(Bg);
-                DrawCell(g, new Rectangle(0, 0, CS, CS), c, false, 1, null);
+                if (wall) using (Brush br = new SolidBrush(WallC)) g.FillRectangle(br, 0, 0, CS, CS);
+                else g.FillRectangle(Brushes.DimGray, CS / 2 - 1, CS / 2 - 1, 2, 2);
+            }
+            return b;
+        }
+
+        public static Bitmap StartSwatch()
+        {
+            Bitmap b = new Bitmap(CS, CS);
+            using (Graphics g = Graphics.FromImage(b))
+            {
+                g.Clear(Bg);
+                using (Pen p = new Pen(Color.Yellow, 3) { EndCap = System.Drawing.Drawing2D.LineCap.ArrowAnchor }) g.DrawLine(p, 3, CS / 2, CS - 3, CS / 2);
             }
             return b;
         }
@@ -1014,7 +1433,7 @@ namespace ZorEdit
             return e.X >= 0 && e.Y >= 0 && x < Level.W && y < Level.H;
         }
 
-        protected override void OnMouseDown(MouseEventArgs e) { Focus(); Apply(e); }
+        protected override void OnMouseDown(MouseEventArgs e) { Focus(); lastX = lastY = -1; Apply(e); }
         protected override void OnMouseMove(MouseEventArgs e)
         {
             int x, y;
@@ -1022,14 +1441,17 @@ namespace ZorEdit
             Apply(e);
         }
         protected override void OnMouseLeave(EventArgs e) { hx = hy = -1; Invalidate(); if (Hover != null) Hover(-1, -1); }
-        protected override void OnMouseUp(MouseEventArgs e) { Hold = false; }
+        protected override void OnMouseUp(MouseEventArgs e) { Hold = false; lastX = lastY = -1; }
 
         void Apply(MouseEventArgs e)
         {
             int x, y;
             if (Hold || level == null || !HitCell(e, out x, out y) || Painted == null) return;
-            if (e.Button == MouseButtons.Left) Painted(x, y, false);
-            else if (e.Button == MouseButtons.Right) Painted(x, y, true);
+            if (e.Button != MouseButtons.Left && e.Button != MouseButtons.Right) return;
+            if (x == lastX && y == lastY) return;
+            bool first = lastX < 0;
+            lastX = x; lastY = y;
+            Painted(x, y, e.Button == MouseButtons.Right, first);
         }
     }
 
