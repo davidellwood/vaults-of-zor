@@ -483,7 +483,7 @@ namespace ZorEdit
             Level l = Cur;
             tName.Text = l.Name;
             cFacing.SelectedIndex = l.Facing & 3;
-            tIntro.Text = l.Intro;
+            tIntro.Text = (l.Intro ?? "").Replace("|", "\r\n");
             lBeh.Script = l.Script;
             lScriptResult.Text = "";
             loading = false;
