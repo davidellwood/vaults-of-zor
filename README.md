@@ -224,8 +224,11 @@ corner, `MOVE STONE` for a ruby.
 * **Behaviours:** each list (on a placed object, a kind of object, the level, the whole pack)
   shows its rules one per line. **Add...** or a double-click opens the builder: choose *When*, add
   *If* conditions and *Do* actions from drop-downs (they offer your kinds of object, named objects,
-  flags and counters), and see the rule as text and whether it compiles. Tick **As text** to edit
-  the rules directly.
+  flags and counters), and see the rule as text and whether it compiles. A **Map** button beside a
+  cell or object field picks it on the level map; an unnamed object is given a name so a rule can
+  refer to it. Tick **As text** to edit the rules directly.
+* **Undo / Redo (Ctrl+Z / Ctrl+Y)** step through your changes to the pack. Inside a text box
+  Ctrl+Z undoes typing in that box.
 * **Map markers:** cells with level behaviours have a green corner, objects with behaviours of
   their own a magenta dot, and arrows show where teleporters and plates lead.
 * **Objects tab:** the kinds of object in the pack, their settings and their behaviours. Renaming
@@ -239,6 +242,8 @@ corner, `MOVE STONE` for a ruby.
   `win`), intro text too long, and a pack too big for memory.
 * **Test > Play in Emulator (F5)** builds the game and runs it in trs80gp. **Shift+F5** boots
   TRSDOS, copies the game and the level file onto a blank disk with IMPORT2, and runs `ZOR`.
+  **F6** plays only the level you are editing; **Shift+F6** (or right-click > *Play this level from
+  here*) starts it at the selected cell. The pack itself is not changed.
 * **File > Export Level File** writes a `.LEV` file for your TRSDOS disk. **Export Game** writes a
   single `.CMD` with the levels built in. **Export Game Engine only** writes a `ZOR.CMD` that loads
   `ZOR/LEV`.

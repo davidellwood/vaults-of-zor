@@ -86,6 +86,15 @@ namespace ZorEdit
             file.DropDownItems.Add(Item("Export Game &Engine only (ZOR.CMD, loads ZOR/LEV)...", Keys.None, (s, e) => ExportEngine()));
             file.DropDownItems.Add(new ToolStripSeparator());
             file.DropDownItems.Add(Item("E&xit", Keys.None, (s, e) => Close()));
+            ToolStripMenuItem edit = new ToolStripMenuItem("&Edit");
+            // Ctrl+Z / Ctrl+Y are handled in ProcessCmdKey so text boxes keep their own undo.
+            miUndo = Item("&Undo", Keys.None, (s, e) => Undo(true)); miUndo.ShortcutKeyDisplayString = "Ctrl+Z";
+            miRedo = Item("&Redo", Keys.None, (s, e) => Undo(false)); miRedo.ShortcutKeyDisplayString = "Ctrl+Y";
+            edit.DropDownItems.Add(miUndo);
+            edit.DropDownItems.Add(miRedo);
+            edit.DropDownOpening += (s, e) => { CommitUndo(); UpdateUndoMenu(); };
+            undoTimer = new Timer { Interval = 500 };
+            undoTimer.Tick += (s, e) => UndoTick();
             ToolStripMenuItem lev = new ToolStripMenuItem("&Level");
             lev.DropDownItems.Add(Item("&Add Level", Keys.None, (s, e) => AddLevel(BlankLevel())));
             lev.DropDownItems.Add(Item("&Duplicate Level", Keys.None, (s, e) => AddLevel(Cur.Clone())));
@@ -98,13 +107,15 @@ namespace ZorEdit
             ToolStripMenuItem test = new ToolStripMenuItem("&Test");
             test.DropDownItems.Add(Item("&Check Pack", Keys.F7, (s, e) => CheckPack(true)));
             test.DropDownItems.Add(Item("&Play in Emulator", Keys.F5, (s, e) => Play(false)));
+            test.DropDownItems.Add(Item("Play This &Level Only", Keys.F6, (s, e) => PlayLevel(false)));
+            test.DropDownItems.Add(Item("Play This Level from the &Selected Cell", Keys.Shift | Keys.F6, (s, e) => PlayLevel(true)));
             test.DropDownItems.Add(Item("Play from TRSDOS &Disk in Emulator", Keys.Shift | Keys.F5, (s, e) => Play(true)));
             test.DropDownItems.Add(new ToolStripSeparator());
             test.DropDownItems.Add(Item("Set &Emulator Path...", Keys.None, (s, e) => PickEmulator()));
             ToolStripMenuItem help = new ToolStripMenuItem("&Help");
             help.DropDownItems.Add(Item("&Quick Guide", Keys.F1, (s, e) => ShowHelp()));
             help.DropDownItems.Add(Item("&Script Reference", Keys.Shift | Keys.F1, (s, e) => ShowScriptHelp()));
-            menu.Items.AddRange(new ToolStripItem[] { file, lev, test, help });
+            menu.Items.AddRange(new ToolStripItem[] { file, edit, lev, test, help });
 
             tools = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, ImageScalingSize = new Size(24, 24) };
             AddFixed("Select", MapCanvas.SelectIcon(), "Select a cell to edit its objects  (Esc)", Tool.Select);
@@ -326,7 +337,7 @@ namespace ZorEdit
             TabPage p = new TabPage("Scripts");
             SplitContainer sp = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 330 };
             lBeh = new BehaviourList { Dock = DockStyle.Fill };
-            lBeh.Context = () => new BehaviourContext { Pack = pack, Level = Cur, Title = "level " + Cur.Name };
+            lBeh.Context = () => new BehaviourContext { Pack = pack, Level = Cur, Title = "level " + Cur.Name, Changed = BuilderChanged };
             lBeh.NewRule = "on arrive if at 1,1 then say \"\"";
             pBeh = new BehaviourList { Dock = DockStyle.Fill };
             pBeh.Context = () => new BehaviourContext { Pack = pack, Title = "every level" };
@@ -428,6 +439,7 @@ namespace ZorEdit
             LoadUi();
             dirty = false;
             UpdateTitle();
+            ResetUndo();
         }
 
         void OpenFile(string f)
@@ -440,6 +452,7 @@ namespace ZorEdit
                 LoadUi();
                 dirty = old;
                 UpdateTitle();
+                ResetUndo();
                 if (old) Info(Path.GetFileName(f) + " is an older pack. It has been converted: every kind of cell is now an object type you can change on the Objects tab, and script items are objects on the map.\n\nSave it under a new name to keep the converted version.");
                 else Settings.Set("last", f);
             }
@@ -547,7 +560,87 @@ namespace ZorEdit
             catch (Exception ex) { sInfo.Text = ex.Message; }
         }
 
-        void MarkDirty() { if (!dirty) { dirty = true; UpdateTitle(); } }
+        void MarkDirty()
+        {
+            if (!dirty) { dirty = true; UpdateTitle(); }
+            if (undoTimer != null) { undoTimer.Stop(); undoTimer.Start(); }
+        }
+
+        // ================================================================ undo / redo
+        // The whole pack is kept as .ZLP text. Edits are grouped: a snapshot is taken
+        // once editing has paused for a moment (and never while a mouse button is held).
+        Stack<string> undo = new Stack<string>(), redo = new Stack<string>();
+        string snapshot;
+        Timer undoTimer;
+        ToolStripMenuItem miUndo, miRedo;
+
+        static string Snap(Pack p) { return string.Join("\n", Zlp.Lines(p)); }
+
+        void ResetUndo()
+        {
+            undo.Clear(); redo.Clear();
+            snapshot = Snap(pack);
+            if (undoTimer != null) undoTimer.Stop();
+            UpdateUndoMenu();
+        }
+
+        void CommitUndo()
+        {
+            if (pack == null || snapshot == null) return;
+            if (undoTimer != null) undoTimer.Stop();
+            string now = Snap(pack);
+            if (now == snapshot) return;
+            undo.Push(snapshot);
+            snapshot = now;
+            redo.Clear();
+            UpdateUndoMenu();
+        }
+
+        void UndoTick()
+        {
+            if (Control.MouseButtons != MouseButtons.None) return;   // still dragging: try again next tick
+            CommitUndo();
+        }
+
+        void UpdateUndoMenu()
+        {
+            if (miUndo != null) miUndo.Enabled = undo.Count > 0;
+            if (miRedo != null) miRedo.Enabled = redo.Count > 0;
+        }
+
+        void Undo(bool back)
+        {
+            CommitUndo();
+            Stack<string> from = back ? undo : redo, to = back ? redo : undo;
+            if (from.Count == 0) return;
+            to.Push(snapshot);
+            snapshot = from.Pop();
+            int li = levelList.SelectedIndex, ti = typeList.SelectedIndex, x = selX, y = selY;
+            pack = Zlp.Parse(snapshot.Split('\n'));
+            LoadUi();
+            RefreshList(li);
+            ShowLevel();
+            RefreshTypes(ti);
+            ShowType();
+            if (x >= 0 && x < Level.W && y >= 0 && y < Level.H) Select(x, y);
+            dirty = true;
+            UpdateTitle();
+            UpdateUndoMenu();
+        }
+
+        /// The control that really has the focus (inside any containers).
+        Control FocusedControl()
+        {
+            Control c = ActiveControl;
+            while (c is ContainerControl && ((ContainerControl)c).ActiveControl != null) c = ((ContainerControl)c).ActiveControl;
+            return c;
+        }
+
+        bool TextFocused()
+        {
+            Control c = FocusedControl();
+            return c is TextBoxBase || c is NumericUpDown || c is ComboBox || (c != null && c.Parent is NumericUpDown);
+        }
         void UpdateTitle() { Text = "ZorEdit - " + (path == null ? "untitled" : Path.GetFileName(path)) + (dirty ? " *" : "") + "   (Vaults of Zor level editor)"; }
 
         string CellText(int x, int y)
@@ -642,9 +735,18 @@ namespace ZorEdit
             int ti = o == null ? -1 : pack.TypeIndex(o.Type);
             return new BehaviourContext
             {
-                Pack = pack, Level = Cur, Scope = ti + 1, Self = o == null ? -1 : Cur.Objs.IndexOf(o),
+                Pack = pack, Level = Cur, Scope = ti + 1, Self = o == null ? -1 : Cur.Objs.IndexOf(o), Changed = BuilderChanged,
                 Title = o == null ? "" : "this " + o.Type + (o.Name.Length > 0 ? " (" + o.Name + ")" : "") + (o.OnMap ? " at " + o.X + "," + o.Y : "")
             };
+        }
+
+        /// The behaviour builder's map picker gave an object a name.
+        void BuilderChanged()
+        {
+            if (selObj != null && tOName.Text != selObj.Name) { bool was = loading; loading = true; tOName.Text = selObj.Name; loading = was; }
+            canvas.Invalidate();
+            if (sCell != null && selX >= 0) sCell.Text = CellText(selX, selY);
+            MarkDirty();
         }
 
         BehaviourContext TypeContext()
@@ -707,6 +809,7 @@ namespace ZorEdit
                     m.Items.Add(ed);
                 }
                 m.Items.Add(new ToolStripSeparator());
+                m.Items.Add(new ToolStripMenuItem("Play this level from here (Shift+F6)", null, (s, e) => PlayLevel(true)));
                 m.Items.Add(new ToolStripMenuItem("Start here", null, (s, e) =>
                 {
                     l.StartX = x; l.StartY = y; l.Wall[y, x] = false;
@@ -868,7 +971,12 @@ namespace ZorEdit
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
-            if (!(ActiveControl is TextBoxBase) && !(ActiveControl is NumericUpDown) && !(ActiveControl is ComboBox) && (keyData & (Keys.Control | Keys.Alt | Keys.Shift)) == 0)
+            if (!TextFocused() && (keyData == (Keys.Control | Keys.Z) || keyData == (Keys.Control | Keys.Y) || keyData == (Keys.Control | Keys.Shift | Keys.Z)))
+            {
+                Undo(keyData == (Keys.Control | Keys.Z));
+                return true;
+            }
+            if (!TextFocused() && (keyData & (Keys.Control | Keys.Alt | Keys.Shift)) == 0)
             {
                 Keys code = keyData & Keys.KeyCode;
                 if (code == Keys.Escape) { if (picking) { picking = false; ShowObjPanel(); } else SetTool(Tool.Select, null); return true; }
@@ -1095,11 +1203,13 @@ namespace ZorEdit
             UpdateInfo();
         }
 
-        bool CheckPack(bool showOk)
+        bool CheckPack(bool showOk) { return CheckPack(pack, showOk); }
+
+        bool CheckPack(Pack p, bool showOk)
         {
-            List<string> all = Checker.Check(pack);
+            List<string> all = Checker.Check(p);
             bool errors = all.Any(s => s.StartsWith("ERROR"));
-            if (all.Count == 0) { if (showOk) MessageBox.Show(this, "All " + pack.Levels.Count + " level(s) compile and look complete.", "Check pack", MessageBoxButtons.OK, MessageBoxIcon.Information); return true; }
+            if (all.Count == 0) { if (showOk) MessageBox.Show(this, "All " + p.Levels.Count + " level(s) compile and look complete.", "Check pack", MessageBoxButtons.OK, MessageBoxIcon.Information); return true; }
             if (showOk || errors)
                 MessageBox.Show(this, string.Join("\n\n", all.Take(20)), errors ? "Check pack - fix these before exporting" : "Check pack", MessageBoxButtons.OK, errors ? MessageBoxIcon.Error : MessageBoxIcon.Warning);
             return !errors;
@@ -1169,9 +1279,31 @@ namespace ZorEdit
                 if (d.ShowDialog(this) == DialogResult.OK) Settings.Set("emulator", d.FileName);
         }
 
-        void Play(bool fromDisk)
+        /// Play only the level being edited, from its start or from the selected cell.
+        void PlayLevel(bool fromCell)
         {
-            if (!CheckPack(false)) return;
+            Pack p = Zlp.Parse(Zlp.Lines(pack).ToArray());      // a copy
+            int li = levelList.SelectedIndex;
+            Level l = p.Levels[li];
+            p.Levels.Clear();
+            p.Levels.Add(l);
+            if (fromCell)
+            {
+                if (selX < 0) { Error("Select a cell first (Select tool, click a cell), then play from it."); return; }
+                if (l.Wall[selY, selX]) { Error("The selected cell " + selX + "," + selY + " is a wall."); return; }
+                if (l.At(selX, selY).Any(o => { ObjType t = p.Type(o.Type); return t != null && t.Solid; }))
+                { Error("Something solid stands on the selected cell " + selX + "," + selY + "."); return; }
+                l.StartX = selX;
+                l.StartY = selY;
+            }
+            Play(false, p);
+        }
+
+        void Play(bool fromDisk) { Play(fromDisk, pack); }
+
+        void Play(bool fromDisk, Pack pack)
+        {
+            if (!CheckPack(pack, false)) return;
             string emu = Settings.Get("emulator");
             if (emu == null || !File.Exists(emu))
             {
@@ -1217,7 +1349,8 @@ namespace ZorEdit
                  "Behaviours are built from When (a command, stepping onto it, walking into it, every turn, level start), If (conditions) and Do (actions). Double-click a behaviour to change it; tick 'As text' to edit the rules directly.\n\n" +
                  "Selected object (Level tab): every placed object has its own value (hit points, uses, gold...), two numbers P1,P2 (for example a teleporter's or plate's target: Pick target on map), a description, texts 2 and 3 for 'say this 2' / 'speak this 2', and behaviours of its own.\n\n" +
                  "A level is finished by a behaviour that says 'next' (the old packs use a ladder you climb with the amulet), and the game is won by 'win' or by 'next' on the last level.\n\n" +
-                 "Test > Check Pack (F7) compiles everything and looks for problems. Test > Play in Emulator (F5) runs the pack in trs80gp.\n\n" +
+                 "Test > Check Pack (F7) compiles everything and looks for problems. Test > Play in Emulator (F5) runs the pack in trs80gp. F6 plays only the level you are editing, and Shift+F6 (or right-click > Play this level from here) starts it at the selected cell.\n\n" +
+                 "Edit > Undo (Ctrl+Z) and Redo (Ctrl+Y) step back and forward through your changes to the pack. Inside a text box, Ctrl+Z undoes typing in that box instead.\n\n" +
                  "Older packs are converted when opened: their fixed cells become ordinary object types you can change.");
         }
 

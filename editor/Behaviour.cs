@@ -25,6 +25,74 @@ namespace ZorEdit
         public int Self = -1;               // placed object index, or -1
         public string Title = "";
         public bool HasThis { get { return Scope > 0; } }
+        public Action Changed;              // called when the builder changes the level (e.g. names an object)
+    }
+
+    // ==================================================================== map picker
+    /// Shows the level map; clicking a cell picks it (or an object on it).
+    public class MapPicker : Form
+    {
+        readonly BehaviourContext ctx;
+        readonly bool wantObj;
+        readonly Label hint;
+        public string Result;
+
+        public MapPicker(BehaviourContext c, bool obj)
+        {
+            ctx = c; wantObj = obj;
+            Text = obj ? "Pick an object on the map" : "Pick a cell on the map";
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = MinimizeBox = false;
+            StartPosition = FormStartPosition.CenterParent;
+            Font = new Font("Segoe UI", 9f);
+            MapCanvas m = new MapCanvas { Pack = c.Pack, Level = c.Level, Location = new Point(8, 8), Selected = new Point(-1, -1) };
+            hint = new Label { Location = new Point(8, m.Bottom + 6), AutoSize = true,
+                               Text = obj ? "Click a cell with an object on it. Esc cancels." : "Click a cell. Esc cancels." };
+            m.Hover += (x, y) => hint.Text = x < 0 ? "" : x + "," + y + (c.Level.Wall[y, x] ? "  wall" : "") +
+                                     string.Concat(c.Level.At(x, y).Select(o => "  " + o.Type + (o.Name.Length > 0 ? " (" + o.Name + ")" : "")));
+            m.Painted += (x, y, right, first) => { if (first) { m.Hold = true; BeginInvoke(new Action(() => Pick(x, y, m))); } };
+            Controls.Add(m);
+            Controls.Add(hint);
+            ClientSize = new Size(m.Right + 8, hint.Bottom + 10);
+            KeyPreview = true;
+            KeyDown += (s, e) => { if (e.KeyCode == Keys.Escape) Close(); };
+        }
+
+        void Pick(int x, int y, MapCanvas m)
+        {
+            if (!wantObj) { Result = x + "," + y; DialogResult = DialogResult.OK; Close(); return; }
+            List<Inst> here = ctx.Level.At(x, y).ToList();
+            if (here.Count == 0) { hint.Text = "Nothing on " + x + "," + y + ". Click a cell with an object on it."; return; }
+            if (here.Count == 1) { Choose(here[0]); return; }
+            ContextMenuStrip menu = new ContextMenuStrip();
+            foreach (Inst o in here)
+            {
+                Inst oo = o;
+                menu.Items.Add(o.Type + (o.Name.Length > 0 ? " (" + o.Name + ")" : ""), null, (s, e) => Choose(oo));
+            }
+            menu.Show(m, m.PointToClient(Cursor.Position));
+        }
+
+        void Choose(Inst o)
+        {
+            if (ctx.HasThis && ctx.Self >= 0 && ctx.Self < ctx.Level.Objs.Count && ctx.Level.Objs[ctx.Self] == o)
+            {
+                Result = "this"; DialogResult = DialogResult.OK; Close(); return;
+            }
+            if (o.Name.Length == 0)
+            {
+                // a rule can only name an object that has a name: give it one
+                string id = Regex.Replace(o.Type.ToLowerInvariant(), "[^a-z0-9]", "");
+                if (id.Length == 0) id = "obj";
+                int n = 1;
+                while (ctx.Level.Named(id + n) != null || ctx.Pack.Type(id + n) != null) n++;
+                o.Name = id + n;
+                if (ctx.Changed != null) ctx.Changed();
+            }
+            Result = o.Name;
+            DialogResult = DialogResult.OK;
+            Close();
+        }
     }
 
     // ==================================================================== rule model
@@ -489,7 +557,44 @@ namespace ZorEdit
                 if (c is ComboBox) ((ComboBox)c).SelectedIndexChanged += (s, e) => Changed();
                 u.Args.Add(c);
                 u.Fields.Controls.Add(c);
+                if (ctx.Level != null && (p == "{XY}" || p == "{O}" || p == "{OT}"))
+                {
+                    bool obj = p != "{XY}";
+                    Control field = c;
+                    Button pick = new Button { Text = "Map", Width = 40, Height = c.Height + 1, Margin = new Padding(0, 2, 6, 0) };
+                    tips.SetToolTip(pick, obj ? "Pick the object on the map (an unnamed object is given a name)" : "Pick the cell on the map");
+                    pick.Click += (s, e) =>
+                    {
+                        using (MapPicker mp = new MapPicker(ctx, obj))
+                            if (mp.ShowDialog(this) == DialogResult.OK) { field.Text = mp.Result; RefreshObjectLists(); }
+                    };
+                    u.Fields.Controls.Add(pick);
+                }
             }
+        }
+
+        readonly ToolTip tips = new ToolTip();
+
+        /// After the picker names an object, offer the new name in every object drop-down.
+        void RefreshObjectLists()
+        {
+            foreach (FlowLayoutPanel panel in new[] { pConds, pActs })
+                foreach (Control line in panel.Controls)
+                {
+                    RowUi u = line.Tag as RowUi;
+                    if (u == null) continue;
+                    for (int i = 0, a = 0; i < u.R.D.Parts.Length && a < u.Args.Count; i++)
+                    {
+                        string p = u.R.D.Parts[i];
+                        if (!p.StartsWith("{")) continue;
+                        ComboBox cb = u.Args[a++] as ComboBox;
+                        if (cb == null || (p != "{O}" && p != "{OT}")) continue;
+                        string t = cb.Text;
+                        cb.Items.Clear();
+                        cb.Items.AddRange(Objects(p == "{OT}").Distinct().Cast<object>().ToArray());
+                        cb.Text = t;
+                    }
+                }
         }
 
         IEnumerable<string> Objects(bool types)
